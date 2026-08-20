@@ -18,7 +18,7 @@ export const Route = createRootRoute({
       { name: "theme-color", content: "#14110e" },
       { name: "twitter:card", content: "summary_large_image" },
       { property: "og:type", content: "x:game" },
-      { name: "description", content: "A playful third-person 3D maze. Collect stars, charm the muses, find the exit." },
+      { name: "description", content: "First-person 3D maze hunt. Collect diamonds, charm princesses, outgun AI rivals, find the exit." },
       ...(ogImage
         ? [
             { property: "og:image", content: ogImage },

@@ -28,7 +28,7 @@ function Login() {
             <p className="text-sm text-muted">Sign-in is disabled.</p>
           )}
         </div>
-        <Link to="/" className="mt-5 block text-center text-sm text-muted hover:text-fg">
+        <Link to="/" search={{ room: undefined }} className="mt-5 block text-center text-sm text-muted hover:text-fg">
           Back to the maze
         </Link>
       </div>
