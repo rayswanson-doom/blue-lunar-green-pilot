@@ -1,3 +1,5 @@
+import { THEME_COMBAT, WEAPON_FEEL, type FireStyle } from "./config";
+
 export const APP_NAME = "Glimmer Maze";
 export const MAX_HEARTS = 3;
 export const BOT_NAMES = ["Ash", "Vex", "Rook", "Nyx"] as const;
@@ -80,22 +82,22 @@ export const THEMES: ThemeDef[] = [
     id: "cyberpunk",
     label: "Futuristic Cyberpunk",
     hint: "Wet metal, teal neon, night rain",
-    fog: 0x0b1218,
-    fogNear: 8,
-    fogFar: 34,
-    hemiSky: 0x4aa7c8,
-    hemiGround: 0x1a2430,
-    sun: 0x7fd0e8,
-    sunInt: 0.55,
-    fill: 0xe07a4a,
-    bg: 0x070b10,
-    wallA: 0x1c2733,
-    wallB: 0x243140,
-    wallC: 0x162028,
-    cap: 0x3a8fa3,
-    floorA: 0x151c24,
-    floorB: 0x1b242e,
-    ground: 0x0e141a,
+    fog: 0x152028,
+    fogNear: 10,
+    fogFar: 40,
+    hemiSky: 0x7ec8e0,
+    hemiGround: 0x243040,
+    sun: 0x9ee0f2,
+    sunInt: 0.85,
+    fill: 0xe08a5a,
+    bg: 0x101820,
+    wallA: 0x2a3a4a,
+    wallB: 0x324656,
+    wallC: 0x223038,
+    cap: 0x4ab8c8,
+    floorA: 0x1c2834,
+    floorB: 0x243038,
+    ground: 0x121a22,
     accent: 0x3ec3d6,
     lantern: 0x5ce1f2,
     sky: "/game/sky-cyberpunk.jpg",
@@ -128,24 +130,24 @@ export const THEMES: ThemeDef[] = [
     id: "hell",
     label: "Hell",
     hint: "Basalt halls and ember light",
-    fog: 0x2a0e0a,
-    fogNear: 7,
-    fogFar: 30,
-    hemiSky: 0xff6a3a,
-    hemiGround: 0x1a0806,
-    sun: 0xff7a40,
-    sunInt: 0.9,
-    fill: 0x6a2018,
-    bg: 0x140806,
-    wallA: 0x3a1c16,
-    wallB: 0x2e1612,
-    wallC: 0x24110e,
-    cap: 0x6a2418,
-    floorA: 0x2a1410,
-    floorB: 0x1e0e0c,
-    ground: 0x120808,
-    accent: 0xe25a32,
-    lantern: 0xff5a28,
+    fog: 0xc47850,
+    fogNear: 16,
+    fogFar: 54,
+    hemiSky: 0xffd2a8,
+    hemiGround: 0x5a2a1c,
+    sun: 0xffb070,
+    sunInt: 1.55,
+    fill: 0xff8a50,
+    bg: 0x4a2418,
+    wallA: 0x9a5c48,
+    wallB: 0x8a5344,
+    wallC: 0xaa6a52,
+    cap: 0xc45a32,
+    floorA: 0x6e4030,
+    floorB: 0x5a3428,
+    ground: 0x3a2018,
+    accent: 0xff7a40,
+    lantern: 0xff8a3a,
     sky: "/game/sky-hell.jpg",
   },
   {
@@ -216,8 +218,7 @@ export const MUSES: MuseDef[] = [
     id: "luma",
     name: "Princess Luma Vale",
     title: "Lantern keeper",
-    greeting:
-      "Hold up, hunter. I'm Luma. Name the piece that finishes my look, and I'll arm you.",
+    greeting: "Hold up, hunter. I'm Luma. Name the piece that finishes my look, and I'll arm you.",
     success: "Oh, you saw it! Take this. Don't drop it in the dark.",
     fail: "Mmm, not that one. A spark just winked out.",
     hint: "Look up — something small and sun-shaped sits in her hair.",
@@ -318,17 +319,43 @@ export type Weapon = {
   damage: number;
   range: number;
   cooldown: number;
+  blade: number;
+  glow: number;
+  grip: number;
+  museId: MuseId;
+  themeId: ThemeId;
+  style: FireStyle;
+  pellets: number;
+  spread: number;
+  width: number;
+  pierce: number;
+  recoil: number;
 };
 
-const SWORD: Record<1 | 2 | 3, Weapon> = {
-  1: { kind: "sword", tier: 1, name: "Rust shiv", damage: 1, range: 1.85, cooldown: 0.55 },
-  2: { kind: "sword", tier: 2, name: "Steel saber", damage: 1, range: 2.15, cooldown: 0.4 },
-  3: { kind: "sword", tier: 3, name: "Diamond edge", damage: 2, range: 2.4, cooldown: 0.32 },
+const SWORD: Record<1 | 2 | 3, { damage: number; range: number; cooldown: number }> = {
+  1: { damage: 1, range: 2.1, cooldown: 0.42 },
+  2: { damage: 1, range: 2.4, cooldown: 0.32 },
+  3: { damage: 2, range: 2.7, cooldown: 0.24 },
 };
-const GUN: Record<1 | 2 | 3, Weapon> = {
-  1: { kind: "gun", tier: 1, name: "Peashooter", damage: 1, range: 16, cooldown: 0.48 },
-  2: { kind: "gun", tier: 2, name: "Corridor pistol", damage: 1, range: 22, cooldown: 0.32 },
-  3: { kind: "gun", tier: 3, name: "Prism rifle", damage: 2, range: 28, cooldown: 0.22 },
+const GUN: Record<1 | 2 | 3, { damage: number; range: number; cooldown: number }> = {
+  1: { damage: 1, range: 14, cooldown: 0.4 },
+  2: { damage: 1, range: 20, cooldown: 0.28 },
+  3: { damage: 2, range: 26, cooldown: 0.2 },
+};
+
+const THEME_STEEL: Record<ThemeId, { blade: number; glow: number; grip: number; sword: string; gun: string }> = {
+  victorian: { blade: 0xd4c4a0, glow: 0xffc07a, grip: 0x5a3a28, sword: "gaslight", gun: "parlor" },
+  cyberpunk: { blade: 0x7ee8f2, glow: 0x3ec3d6, grip: 0x12181e, sword: "plasma", gun: "pulse" },
+  battlefield: { blade: 0xb8b0a0, glow: 0xe0a05a, grip: 0x3a3428, sword: "trench", gun: "service" },
+  hell: { blade: 0xff6a32, glow: 0xff3a12, grip: 0x1a0c08, sword: "ember", gun: "inferno" },
+  forest: { blade: 0xc4b070, glow: 0x6db36a, grip: 0x3a2a18, sword: "livingwood", gun: "flint" },
+};
+
+const MUSE_EDGE: Record<MuseId, { sword: string; gun: string }> = {
+  luma: { sword: "Lantern", gun: "Beacon" },
+  ruby: { sword: "Ribbon", gun: "Spark" },
+  pearl: { sword: "Quiet", gun: "Pearl" },
+  cinder: { sword: "Trail", gun: "Stomp" },
 };
 
 export function weaponTier(diamonds: number): 1 | 2 | 3 {
@@ -337,9 +364,54 @@ export function weaponTier(diamonds: number): 1 | 2 | 3 {
   return 1;
 }
 
-export function makeWeapon(kind: WeaponKind, diamonds: number): Weapon {
+export function makeWeapon(
+  kind: WeaponKind,
+  diamonds: number,
+  themeId: ThemeId = "victorian",
+  museId: MuseId = "luma",
+): Weapon {
   const tier = weaponTier(diamonds);
-  return kind === "sword" ? SWORD[tier] : GUN[tier];
+  const stats = kind === "sword" ? SWORD[tier] : GUN[tier];
+  const steel = THEME_STEEL[themeId];
+  const muse = MUSE_EDGE[museId];
+  const feel = WEAPON_FEEL[museId];
+  const tm = THEME_COMBAT[themeId];
+  const grade = tier === 3 ? "prism" : tier === 2 ? "fine" : "rough";
+  const noun = kind === "sword" ? steel.sword : steel.gun;
+  const title = kind === "sword" ? muse.sword : muse.gun;
+  return {
+    kind,
+    tier,
+    name: `${title} ${noun} (${grade})`,
+    damage: Math.max(1, Math.round(stats.damage * tm.damage)),
+    range: stats.range * tm.range * (feel.style === "spread" ? 0.55 : feel.style === "thrust" ? 1.15 : 1),
+    cooldown:
+      stats.cooldown * tm.cooldown * (feel.style === "burst" ? 1.15 : feel.style === "cleave" ? 1.2 : 0.9),
+    blade: steel.blade,
+    glow: steel.glow,
+    grip: steel.grip,
+    museId,
+    themeId,
+    style: feel.style,
+    pellets: feel.pellets,
+    spread: feel.spread,
+    width: feel.width,
+    pierce: feel.pierce,
+    recoil: feel.recoil,
+  };
+}
+
+export function musePalette(def: MuseDef, theme: ThemeId) {
+  const hair = def.id === "luma" ? 0xb8894a : def.id === "ruby" ? 0xb8432a : def.id === "pearl" ? 0x1a1410 : 0xc4a05a;
+  const skin = def.id === "pearl" ? 0xc48a6a : def.id === "ruby" ? 0xe0a888 : 0xe8c4a8;
+  const suits: Record<ThemeId, number> = {
+    victorian: def.suit,
+    cyberpunk: def.id === "luma" ? 0x1a3a48 : def.id === "ruby" ? 0x6a2030 : def.id === "pearl" ? 0xd8e4ea : 0x3a4a32,
+    battlefield: def.id === "luma" ? 0xc4b08a : def.id === "ruby" ? 0x8a4a38 : def.id === "pearl" ? 0xc8c0b0 : 0x5a6a48,
+    hell: def.id === "luma" ? 0x4a2018 : def.id === "ruby" ? 0x6a1818 : def.id === "pearl" ? 0xd8d0c4 : 0x3a2418,
+    forest: def.id === "luma" ? 0x4a6a3a : def.id === "ruby" ? 0x8a3a28 : def.id === "pearl" ? 0x8aa090 : 0x3d6b3a,
+  };
+  return { hair, skin, suit: suits[theme], accent: def.accent };
 }
 
 export const BEST_KEY = "glimmer-maze-best";
@@ -364,16 +436,16 @@ export function writeBest(seconds: number) {
   }
 }
 
-export function formatTime(seconds: number) {
-  const s = Math.max(0, Math.floor(seconds));
+export function formatTime(sec: number) {
+  const s = Math.max(0, Math.floor(sec));
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
 export function makeRoomCode() {
-  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
-  for (let i = 0; i < 6; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  for (let i = 0; i < 5; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
   return out;
 }

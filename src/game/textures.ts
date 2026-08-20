@@ -45,10 +45,12 @@ export function makeThemeTextures(theme: ThemeDef) {
     wall.ctx.fillRect(0, 210, 256, 3);
   }
   if (theme.id === "hell") {
-    wall.ctx.fillStyle = "rgba(220,70,30,0.2)";
-    for (let i = 0; i < 12; i++) {
-      wall.ctx.fillRect(Math.random() * 256, Math.random() * 256, 8, 40);
+    wall.ctx.fillStyle = "rgba(255,120,40,0.35)";
+    for (let i = 0; i < 18; i++) {
+      wall.ctx.fillRect(Math.random() * 256, Math.random() * 256, 10, 50);
     }
+    wall.ctx.fillStyle = "rgba(255,200,120,0.18)";
+    wall.ctx.fillRect(0, 80, 256, 12);
   }
   if (theme.id === "forest") {
     wall.ctx.strokeStyle = "rgba(30,20,10,0.25)";

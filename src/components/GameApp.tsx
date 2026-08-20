@@ -25,7 +25,8 @@ import {
   type SizeId,
   type ThemeId,
 } from "@/game/content";
-import { hushPrincess, speakPrincess } from "@/game/voice";
+import { hushPrincess, speakPrincess, warmVoices } from "@/game/voice";
+import { riddleFor } from "@/game/riddles";
 import type { GameHandle, HudState, HuntSettings } from "@/game/engine";
 import { P2PRoom, type PeerInfo } from "@/lib/multiplayer";
 import { cn } from "@/lib/utils";
@@ -55,7 +56,7 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
   const [best, setBest] = useState<number | null>(null);
   const [sizeId, setSizeId] = useState<SizeId>("medium");
   const [themeId, setThemeId] = useState<ThemeId>("victorian");
-  const [aiCount, setAiCount] = useState(2);
+  const [aiCount, setAiCount] = useState(0);
   const [copied, setCopied] = useState(false);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [joinNote, setJoinNote] = useState<string | null>(null);
@@ -95,7 +96,8 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
             if (e.type === "muse") {
               setWrong(null);
               setLine(null);
-              speakPrincess(e.id, "greeting");
+              const theme = gameRef.current?.getState().themeId ?? "victorian";
+              speakPrincess(e.id, riddleFor(e.id, theme).greeting);
             }
             if (e.type === "result") {
               if (e.ok) setLine(`Armed: ${e.weaponName}`);
@@ -195,7 +197,12 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
   useEffect(() => {
     const onLock = () => setLocked(Boolean(document.pointerLockElement));
     document.addEventListener("pointerlockchange", onLock);
-    return () => document.removeEventListener("pointerlockchange", onLock);
+    warmVoices();
+    window.speechSynthesis?.addEventListener("voiceschanged", warmVoices);
+    return () => {
+      document.removeEventListener("pointerlockchange", onLock);
+      window.speechSynthesis?.removeEventListener("voiceschanged", warmVoices);
+    };
   }, []);
 
   useEffect(() => {
@@ -446,6 +453,7 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
       {phase === "encounter" && muse && hud && (
         <Encounter
           muse={muse}
+          riddle={riddleFor(muse.id, hud.themeId)}
           hearts={hud.hearts}
           hint={hud.hint}
           line={line}
@@ -453,13 +461,14 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
           diamonds={hud.diamondHeld}
           onPick={(id) => {
             const res = gameRef.current?.answer(id);
+            const rid = riddleFor(muse.id, hud.themeId);
             if (res?.ok) {
-              setLine(muse.success);
-              speakPrincess(muse.id, "success");
+              setLine(rid.success);
+              speakPrincess(muse.id, rid.success);
             } else if (res) {
-              setLine(muse.fail);
-              speakPrincess(muse.id, "fail");
-              window.setTimeout(() => speakPrincess(muse.id, "hint"), 900);
+              setLine(rid.fail);
+              speakPrincess(muse.id, rid.fail);
+              window.setTimeout(() => speakPrincess(muse.id, rid.hint), 900);
             }
           }}
           onBack={() => {
@@ -698,13 +707,13 @@ function TitleScreen({
             <legend className="mb-2 text-xs tracking-[0.16em] text-muted uppercase">
               AI hunters
             </legend>
-            <div className="grid grid-cols-4 gap-2">
-              {[1, 2, 3, 4].map((n) => (
+            <div className="grid grid-cols-5 gap-2">
+              {[0, 1, 2, 3, 4].map((n) => (
                 <Choice
                   key={n}
                   active={aiCount === n}
-                  label={`${n}`}
-                  hint={n === 1 ? "Rival" : "Rivals"}
+                  label={n === 0 ? "Solo" : `${n}`}
+                  hint={n === 0 ? "No rivals" : n === 1 ? "Rival" : "Rivals"}
                   onClick={() => {
                     if (isHost) onAi(n);
                   }}
@@ -719,7 +728,7 @@ function TitleScreen({
             <li>WASD to move. Mouse to look. Click to fire once you have a weapon.</li>
             <li>A ghost wall shows before you spend a diamond. F commits.</li>
             <li>Each princess swaps your weapon. More gems, better steel.</li>
-            <li>AI hunters collect, fight, charm princesses, and race you to the portal.</li>
+            <li>Solo mode has no AI rivals. Add 1–4 hunters if you want a fight.</li>
             <li>Invite up to three friends. Ready up. Host freezes the maze when they hit Play.</li>
           </ul>
         )}
@@ -786,6 +795,7 @@ function Choice({
 
 function Encounter({
   muse,
+  riddle,
   hearts,
   hint,
   line,
@@ -796,6 +806,7 @@ function Encounter({
   onBack,
 }: {
   muse: NonNullable<ReturnType<typeof museById>>;
+  riddle: ReturnType<typeof riddleFor>;
   hearts: number;
   hint: boolean;
   line: string | null;
@@ -806,16 +817,25 @@ function Encounter({
   onBack: () => void;
 }) {
   return (
-    <div className="absolute inset-0 z-20 flex items-stretch justify-center bg-bg/70 p-3 backdrop-blur-[2px] md:p-8">
-      <div className="flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-[0_20px_60px_rgba(0,0,0,0.4)] md:flex-row">
-        <div className="relative h-56 shrink-0 bg-elevated md:h-auto md:w-[46%]">
-          <img src={portrait} alt="" className="h-full w-full object-cover" />
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-bg/80 to-transparent p-4">
+    <div className="absolute inset-0 z-20 flex items-stretch justify-center bg-bg/80 p-2 backdrop-blur-[2px] md:p-6">
+      <div className="flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-[0_20px_60px_rgba(0,0,0,0.4)] md:flex-row">
+        <div className="relative min-h-[42%] flex-1 bg-elevated md:min-h-0 md:w-[54%]">
+          <video
+            key={muse.video}
+            className="h-full w-full object-cover"
+            src={muse.video}
+            poster={portrait}
+            autoPlay
+            loop
+            muted
+            playsInline
+          />
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-bg/85 to-transparent p-4">
             <p className="text-xs tracking-[0.16em] text-muted uppercase">{muse.title}</p>
             <p className="font-display text-2xl">{muse.name}</p>
           </div>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5 md:p-7">
+        <div className="flex min-h-0 w-full flex-col gap-4 overflow-y-auto p-5 md:w-[46%] md:p-7">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-1">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -827,10 +847,10 @@ function Encounter({
             </div>
             <p className="text-xs text-muted">{diamonds} diamonds on you — weapon quality scales</p>
           </div>
-          <p className="text-sm leading-relaxed text-fg">{line ?? muse.greeting}</p>
-          {hint && <p className="text-sm text-muted">{muse.hint}</p>}
+          <p className="text-sm leading-relaxed text-fg">{line ?? riddle.greeting}</p>
+          {hint && <p className="text-sm text-muted">{riddle.hint}</p>}
           <div className="mt-auto flex flex-col gap-2">
-            {muse.options.map((opt) => (
+            {riddle.options.map((opt) => (
               <Button
                 key={opt.id}
                 variant="choice"

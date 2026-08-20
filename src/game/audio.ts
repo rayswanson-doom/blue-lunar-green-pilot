@@ -1,3 +1,6 @@
+import { CONFIG, THEME_SOUND } from "./config";
+import type { Weapon } from "./content";
+
 export type GameAudio = {
   resume: () => void;
   pickup: () => void;
@@ -9,6 +12,7 @@ export type GameAudio = {
   charm: () => void;
   shoot: () => void;
   slash: () => void;
+  fireWeapon: (w: Weapon) => void;
   hit: () => void;
   wall: () => void;
 };
@@ -24,6 +28,14 @@ export function createAudio(): GameAudio {
   const resume = () => {
     const c = get();
     if (c.state === "suspended") void c.resume();
+  };
+
+  const master = () => {
+    const c = get();
+    const g = c.createGain();
+    g.gain.value = CONFIG.audio.master;
+    g.connect(c.destination);
+    return g;
   };
 
   const tone = (
@@ -43,24 +55,87 @@ export function createAudio(): GameAudio {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g);
-    g.connect(c.destination);
+    g.connect(master());
     o.start(t);
     o.stop(t + dur + 0.02);
   };
 
-  const noise = (dur: number, gain = 0.04) => {
+  const noise = (dur: number, gain = 0.04, crunch = 0) => {
     const c = get();
-    const n = c.createBuffer(1, c.sampleRate * dur, c.sampleRate);
+    const n = c.createBuffer(1, Math.max(1, (c.sampleRate * dur) | 0), c.sampleRate);
     const data = n.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    let hold = 0;
+    let acc = 0;
+    const step = crunch > 0.2 ? Math.floor(8 + crunch * 24) : 1;
+    for (let i = 0; i < data.length; i++) {
+      if (i % step === 0) hold = Math.random() * 2 - 1;
+      acc = acc * 0.7 + hold * 0.3;
+      data[i] = acc;
+    }
     const src = c.createBufferSource();
     src.buffer = n;
     const g = c.createGain();
-    g.gain.setValueAtTime(gain, c.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
-    src.connect(g);
-    g.connect(c.destination);
+    const t = c.currentTime;
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const filter = c.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 1800 - crunch * 900;
+    src.connect(filter);
+    filter.connect(g);
+    g.connect(master());
     src.start();
+  };
+
+  const fireWeapon = (w: Weapon) => {
+    const th = THEME_SOUND[w.themeId];
+    const c = get();
+    const t = c.currentTime;
+    const out = master();
+    const filter = c.createBiquadFilter();
+    filter.type = w.kind === "gun" ? "lowpass" : "highpass";
+    filter.frequency.value = (w.kind === "gun" ? 1400 : 900) * th.bright;
+    if (th.delay > 0.05) {
+      const d = c.createDelay();
+      d.delayTime.value = th.delay;
+      const fb = c.createGain();
+      fb.gain.value = 0.18;
+      filter.connect(d);
+      d.connect(fb);
+      fb.connect(d);
+      d.connect(out);
+    }
+    filter.connect(out);
+
+    if (w.style === "cleave") {
+      noise(0.1, 0.045 * th.noise, th.crunch);
+      tone(220 * th.color, 0.12, "sawtooth", 0.05, 80);
+      tone(440 * th.bright, 0.08, "triangle", 0.03, 180);
+    } else if (w.style === "thrust") {
+      tone(880 * th.bright, 0.06, "triangle", 0.045, 420);
+      tone(1320 * th.color, 0.09, "sine", 0.03, 700);
+    } else if (w.style === "burst") {
+      noise(0.05, 0.05 * th.noise, th.crunch);
+      tone(520 * th.color, 0.05, "square", 0.03, 140);
+      window.setTimeout(() => {
+        noise(0.04, 0.04 * th.noise, th.crunch);
+        tone(480 * th.color, 0.04, "square", 0.025, 120);
+      }, 55);
+      window.setTimeout(() => {
+        noise(0.04, 0.035 * th.noise, th.crunch);
+        tone(500 * th.color, 0.04, "square", 0.02, 110);
+      }, 110);
+    } else {
+      noise(0.14, 0.07 * th.noise, th.crunch);
+      tone(160 * th.color, 0.12, "sawtooth", 0.05, 60);
+      tone(90, 0.16, "sine", 0.04, 40);
+    }
+
+    if (w.themeId === "hell") tone(70, 0.18, "sine", 0.04, 40);
+    if (w.themeId === "cyberpunk") tone(1800 * th.bright, 0.04, "square", 0.015, 600);
+    if (w.themeId === "victorian") tone(660, 0.08, "triangle", 0.02);
+    if (w.themeId === "forest") tone(310, 0.1, "triangle", 0.025, 200);
+    void t;
   };
 
   return {
@@ -75,9 +150,7 @@ export function createAudio(): GameAudio {
       tone(784, 0.18, "sine", 0.045);
       tone(1046, 0.28, "sine", 0.04);
     },
-    fail: () => {
-      tone(220, 0.16, "sawtooth", 0.03, 110);
-    },
+    fail: () => tone(220, 0.16, "sawtooth", 0.03, 110),
     step: () => tone(140 + Math.random() * 20, 0.04, "sine", 0.025),
     win: () => {
       tone(523, 0.18, "triangle", 0.05);
@@ -97,6 +170,7 @@ export function createAudio(): GameAudio {
       noise(0.06, 0.035);
       tone(280, 0.08, "sawtooth", 0.03, 120);
     },
+    fireWeapon,
     hit: () => tone(140, 0.1, "square", 0.05, 60),
     wall: () => {
       noise(0.1, 0.04);

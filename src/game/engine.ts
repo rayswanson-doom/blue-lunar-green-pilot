@@ -15,16 +15,18 @@ import {
   type ThemeId,
   type Weapon,
 } from "./content";
+import { CONFIG } from "./config";
 import { pickBotTarget, steerBot, type Hunter } from "./ai";
+import { riddleFor } from "./riddles";
 import {
   buildDiamond,
   buildExit,
   buildHunter,
   buildLantern,
-  buildMuse,
   buildPortraitMuse,
   buildViewWeapon,
 } from "./figures";
+import { dressMaze } from "./props";
 import {
   CELL,
   PLAYER_R,
@@ -127,7 +129,7 @@ type MuseEnt = {
 };
 
 const STEP = 1 / 60;
-const SENS = 0.00215;
+const SENS = CONFIG.move.look;
 const EYE = 1.52;
 
 function wrapAngle(a: number) {
@@ -214,6 +216,7 @@ export function createGame(opts: {
   let awayMuse: MuseId | null = null;
   let camShake = 0;
   let recoil = 0;
+  let swing = 0;
   let disposed = false;
   let acc = 0;
   let last = performance.now();
@@ -303,8 +306,11 @@ export function createGame(opts: {
     sun.color.set(theme.sun);
     sun.intensity = theme.sunInt;
     fill.color.set(theme.fill);
-    renderer.toneMappingExposure = theme.id === "cyberpunk" || theme.id === "hell" ? 0.95 : 1.08;
+    renderer.toneMappingExposure =
+      theme.id === "hell" ? 1.32 : theme.id === "cyberpunk" ? 1.08 : 1.1;
     playerLight.color.set(theme.lantern);
+    playerLight.intensity = theme.id === "hell" ? 2.4 : 1.7;
+    playerLight.distance = theme.id === "hell" ? 14 : 10;
     exitLight.color.set(theme.accent);
   }
 
@@ -484,11 +490,11 @@ export function createGame(opts: {
     for (const m of maze.muses) {
       const def = museById(m.id)!;
       const { x, z } = cellCenter(m.c, m.r);
-      const placeholder = buildMuse(def);
+      const placeholder = buildPortraitMuse(null, def.accent, def.id);
       placeholder.position.set(x, 0, z);
       world.add(placeholder);
       const rad = 0.55;
-      const ent: MuseEnt = {
+      const ent = {
         id: m.id,
         mesh: placeholder,
         x,
@@ -508,6 +514,7 @@ export function createGame(opts: {
       muses.push(ent);
       loader.load(musePortrait(def.id, theme.id), (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
         const card = buildPortraitMuse(tex, def.accent, def.id);
         card.position.set(x, 0, z);
         world.remove(placeholder);
@@ -532,12 +539,16 @@ export function createGame(opts: {
       lamp.position.set(p.x + 0.9, 0, p.z + 0.9);
       world.add(lamp);
       if (i < 8) {
-        const light = new THREE.PointLight(theme.lantern, 1.15, 8, 1.5);
+        const light = new THREE.PointLight(theme.lantern, theme.id === "hell" ? 2.1 : 1.15, 8, 1.5);
         light.position.set(p.x + 0.9, 2.15, p.z + 0.9);
         scene.add(light);
         lanternLights.push(light);
       }
     });
+    dressMaze(world, maze, theme, lanternLights);
+    for (const l of lanternLights) {
+      if (!l.parent) scene.add(l);
+    }
 
     const start = cellCenter(maze.start.c, maze.start.r);
     explored.add(maze.start.r * maze.cols + maze.start.c);
@@ -565,7 +576,7 @@ export function createGame(opts: {
     hunters = [me];
     spawnHunter(me);
 
-    const botCount = Math.max(1, Math.min(4, settings.aiCount | 0));
+    const botCount = Math.max(0, Math.min(4, settings.aiCount | 0));
     for (let i = 0; i < botCount; i++) {
       const cell = maze.diamonds[maze.diamonds.length - 1 - i] ?? maze.exit;
       const p = cellCenter(cell.c, cell.r);
@@ -625,8 +636,8 @@ export function createGame(opts: {
   }
 
   function moveHunter(h: Hunter, wishX: number, wishZ: number, dt: number, maxSpeed: number) {
-    const accel = 22;
-    const damp = 14;
+    const accel = CONFIG.move.accel;
+    const damp = CONFIG.move.damp;
     const mag = Math.hypot(wishX, wishZ);
     if (mag > 0.04) {
       h.vx += wishX * accel * dt;
@@ -726,39 +737,49 @@ export function createGame(opts: {
 
   function fireFrom(h: Hunter) {
     if (h.dead || !h.weapon || h.cooldown > 0) return;
-    h.cooldown = h.weapon.cooldown;
-    const fx = -Math.sin(h.yaw);
-    const fz = -Math.cos(h.yaw);
-    const range = h.weapon.range;
+    const w = h.weapon;
+    h.cooldown = w.cooldown;
     if (h.kind === "local") {
-      recoil = h.weapon.kind === "gun" ? 0.08 : 0.12;
-      muzzleLight.intensity = h.weapon.kind === "gun" ? 3.5 : 0;
-      if (h.weapon.kind === "gun") audio.shoot();
-      else audio.slash();
+      recoil = w.recoil;
+      swing = 1;
+      muzzleLight.intensity = w.kind === "gun" ? 4.2 : 1.2;
+      audio.fireWeapon(w);
       const muzzle = viewWeapon?.getObjectByName("muzzle") as THREE.Mesh | undefined;
       if (muzzle && muzzle.material && "opacity" in muzzle.material) {
         (muzzle.material as THREE.MeshBasicMaterial).opacity = 1;
       }
     }
-    let best: Hunter | null = null;
-    let bestT = range;
-    for (const o of hunters) {
-      if (o.id === h.id || o.dead) continue;
-      const dx = o.x - h.x;
-      const dz = o.z - h.z;
-      const along = dx * fx + dz * fz;
-      if (along < 0.2 || along > range) continue;
-      const px = h.x + fx * along;
-      const pz = h.z + fz * along;
-      const lat = Math.hypot(o.x - px, o.z - pz);
-      if (lat > 0.55) continue;
-      if (!lineOpen(maze, h.x, h.z, o.x, o.z)) continue;
-      if (along < bestT) {
-        bestT = along;
-        best = o;
+    const pellets = Math.max(1, w.pellets);
+    const hits = new Set<string>();
+    for (let i = 0; i < pellets; i++) {
+      const mid = (pellets - 1) / 2;
+      const ang = (i - mid) * w.spread;
+      const yaw = h.yaw + ang;
+      const fx = -Math.sin(yaw);
+      const fz = -Math.cos(yaw);
+      let pierced = 0;
+      const ordered = hunters
+        .filter((o) => o.id !== h.id && !o.dead)
+        .map((o) => {
+          const dx = o.x - h.x;
+          const dz = o.z - h.z;
+          const along = dx * fx + dz * fz;
+          const px = h.x + fx * along;
+          const pz = h.z + fz * along;
+          const lat = Math.hypot(o.x - px, o.z - pz);
+          return { o, along, lat };
+        })
+        .filter((s) => s.along > 0.2 && s.along < w.range && s.lat < w.width)
+        .sort((a, b) => a.along - b.along);
+      for (const s of ordered) {
+        if (hits.has(s.o.id)) continue;
+        if (!lineOpen(maze, h.x, h.z, s.o.x, s.o.z)) continue;
+        hits.add(s.o.id);
+        damage(s.o, w.damage, h);
+        pierced += 1;
+        if (pierced > w.pierce) break;
       }
     }
-    if (best) damage(best, h.weapon.damage, h);
   }
 
   function tryCharmBot(h: Hunter) {
@@ -767,7 +788,7 @@ export function createGame(opts: {
       if (Math.hypot(m.x - h.x, m.z - h.z) > 1.3) continue;
       m.charmed = true;
       const def = museById(m.id)!;
-      h.weapon = makeWeapon(def.reward, h.diamonds);
+      h.weapon = makeWeapon(def.reward, h.diamonds, theme.id, def.id);
       refreshPortal();
     }
   }
@@ -815,11 +836,11 @@ export function createGame(opts: {
       const rx = Math.cos(yaw);
       const rz = -Math.sin(yaw);
       me.yaw = yaw;
-      moveHunter(me, fx * az + rx * ax, fz * az + rz * ax, dt, 5.5);
+      moveHunter(me, fx * az + rx * ax, fz * az + rz * ax, dt, CONFIG.move.walk);
       const speed = Math.hypot(me.vx, me.vz);
       if (speed > 0.55) {
-        bob += dt * speed * 2.4;
-        if (bob - lastStep > 0.55) {
+        bob += dt * speed * CONFIG.move.bob;
+        if (bob - lastStep > CONFIG.move.stepEvery) {
           lastStep = bob;
           audio.step();
         }
@@ -840,7 +861,7 @@ export function createGame(opts: {
           portalOpen,
           exitPos,
         );
-        steerBot(h, maze, tgt.x, tgt.z, dt, 4.4);
+        steerBot(h, maze, tgt.x, tgt.z, dt, 6.4);
         const nearby = hash.nearby(h.x, h.z, PLAYER_R + 0.9);
         const extra = extraBoxes();
         h.x += h.vx * dt;
@@ -1008,7 +1029,21 @@ export function createGame(opts: {
     if (muzzle && muzzle.material && "opacity" in muzzle.material) {
       const mat = muzzle.material as THREE.MeshBasicMaterial;
       mat.opacity = Math.max(0, mat.opacity - dt * 8);
+      muzzle.scale.setScalar(1 + mat.opacity * 2.4);
     }
+    const anim = viewWeapon?.getObjectByName("anim");
+    if (anim) {
+      if (local().weapon?.kind === "sword") {
+        const a = Math.sin(swing * Math.PI);
+        anim.rotation.z = -a * 1.55;
+        anim.rotation.x = a * 0.55;
+        anim.position.y = a * 0.08;
+      } else {
+        anim.rotation.x = swing * 0.35;
+        anim.position.z = swing * 0.12;
+      }
+    }
+    swing = Math.max(0, swing - dt * 3.4);
   }
 
   function drawMinimap() {
@@ -1295,7 +1330,7 @@ export function createGame(opts: {
       if (ok) {
         const ent = muses.find((m) => m.id === def.id);
         if (ent) ent.charmed = true;
-        me.weapon = makeWeapon(def.reward, me.diamonds);
+        me.weapon = makeWeapon(def.reward, me.diamonds, theme.id, def.id);
         setViewWeapon(me.weapon);
         audio.charm();
         audio.success();

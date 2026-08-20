@@ -1,5 +1,7 @@
 import * as THREE from "three";
-import type { MuseDef, Weapon } from "./content";
+import type { MuseDef, ThemeId, Weapon } from "./content";
+import { musePalette } from "./content";
+import { makePixelWeaponTexture } from "./pixelWeapons";
 
 function mat(color: number, opts: { rough?: number; metal?: number; em?: number; emCol?: number } = {}) {
   return new THREE.MeshStandardMaterial({
@@ -83,34 +85,78 @@ function accessory(kind: MuseDef["correct"], accent: number, hair: number) {
   return g;
 }
 
-export function buildMuse(def: MuseDef): THREE.Group {
+export function buildMuse(def: MuseDef, themeId: ThemeId = "victorian"): THREE.Group {
   const g = new THREE.Group();
   g.name = def.id;
-  const skin = mat(def.skin, { rough: 0.5 });
-  const suit = mat(def.suit, { rough: 0.45, metal: 0.12 });
-  const hair = mat(def.hair, { rough: 0.6 });
-  const accent = mat(def.accent, { em: 0.12, emCol: def.accent });
+  const pal = musePalette(def, themeId ?? "victorian");
+  const skin = mat(pal.skin, { rough: 0.48 });
+  const suit = mat(pal.suit, { rough: 0.42, metal: themeId === "cyberpunk" ? 0.35 : 0.1 });
+  const hair = mat(pal.hair, { rough: 0.58 });
+  const accent = mat(def.accent, { em: 0.18, emCol: def.accent });
   const dark = mat(0x2a2420);
   const sphere = new THREE.SphereGeometry(1, 14, 12);
   const cyl = new THREE.CylinderGeometry(1, 1, 1, 12);
-  addMesh(g, cyl, dark, 0.14, 0.14, 0.02, 0.11, 0.26, 0.16);
-  addMesh(g, cyl, dark, -0.14, 0.14, 0.02, 0.11, 0.26, 0.16);
-  addMesh(g, cyl, suit, 0, 0.78, 0, 0.34, 0.9, 0.26);
-  addMesh(g, sphere, accent, 0, 1.1, 0.16, 0.22, 0.1, 0.08);
-  addMesh(g, sphere, skin, 0, 1.42, 0, 0.3, 0.3, 0.3);
-  addMesh(g, sphere, hair, 0, 1.56, -0.04, 0.34, 0.22, 0.34);
-  addMesh(g, sphere, dark, 0.1, 1.46, 0.24, 0.045, 0.05, 0.04);
-  addMesh(g, sphere, dark, -0.1, 1.46, 0.24, 0.045, 0.05, 0.04);
-  addMesh(g, sphere, dark, 0, 1.34, 0.26, 0.07, 0.03, 0.03);
-  addMesh(g, sphere, suit, 0.42, 0.86, 0, 0.1, 0.1, 0.1);
-  addMesh(g, sphere, suit, -0.42, 0.86, 0, 0.1, 0.1, 0.1);
-  g.add(accessory(def.correct, def.accent, def.hair));
+  const wide = def.id === "ruby" ? 1.12 : 1;
+
+  const legs = new THREE.Group();
+  legs.name = "legs";
+  addMesh(legs, cyl, dark, 0.15 * wide, 0.18, 0.02, 0.12 * wide, 0.36, 0.16);
+  addMesh(legs, cyl, dark, -0.15 * wide, 0.18, 0.02, 0.12 * wide, 0.36, 0.16);
+  if (def.correct === "boots") {
+    addMesh(legs, cyl, accent, 0.16, 0.14, 0.08, 0.15, 0.28, 0.2);
+    addMesh(legs, cyl, accent, -0.16, 0.14, 0.08, 0.15, 0.28, 0.2);
+  }
+  g.add(legs);
+
+  const torso = new THREE.Group();
+  torso.name = "torso";
+  addMesh(torso, cyl, suit, 0, 0.82, 0, 0.34 * wide, 0.95, 0.26);
+  addMesh(torso, sphere, accent, 0, 1.12, 0.14, 0.2 * wide, 0.08, 0.06);
+  g.add(torso);
+
+  const armL = new THREE.Group();
+  armL.name = "armL";
+  armL.position.set(-0.38 * wide, 1.05, 0);
+  addMesh(armL, cyl, suit, 0, -0.22, 0, 0.08, 0.5, 0.08);
+  addMesh(armL, sphere, skin, 0, -0.48, 0, 0.07, 0.07, 0.07);
+  g.add(armL);
+  const armR = new THREE.Group();
+  armR.name = "armR";
+  armR.position.set(0.38 * wide, 1.05, 0);
+  addMesh(armR, cyl, suit, 0, -0.22, 0, 0.08, 0.5, 0.08);
+  addMesh(armR, sphere, skin, 0, -0.48, 0, 0.07, 0.07, 0.07);
+  g.add(armR);
+
+  const head = new THREE.Group();
+  head.name = "head";
+  head.position.set(0, 1.48, 0);
+  addMesh(head, sphere, skin, 0, 0, 0, 0.28, 0.3, 0.26);
+  const hairMesh =
+    def.id === "pearl"
+      ? addMesh(head, sphere, hair, 0, 0.12, -0.04, 0.3, 0.16, 0.3)
+      : def.id === "cinder"
+        ? addMesh(head, sphere, hair, 0, 0.08, -0.02, 0.32, 0.16, 0.3)
+        : addMesh(head, sphere, hair, 0, 0.1, -0.06, 0.34, 0.22, 0.34);
+  hairMesh.name = "hair";
+  addMesh(head, sphere, dark, 0.09, 0.04, 0.22, 0.04, 0.045, 0.03);
+  addMesh(head, sphere, dark, -0.09, 0.04, 0.22, 0.04, 0.045, 0.03);
+  addMesh(head, sphere, dark, 0, -0.08, 0.24, 0.06, 0.025, 0.03);
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.32, 0.4),
+    new THREE.MeshBasicMaterial({ color: pal.skin, transparent: true }),
+  );
+  face.position.set(0, 0.02, 0.22);
+  face.name = "face";
+  head.add(face);
+  g.add(head);
+  g.add(accessory(def.correct, def.accent, pal.hair));
+
   const glow = new THREE.Mesh(
-    new THREE.RingGeometry(0.55, 0.7, 20),
+    new THREE.RingGeometry(0.55, 0.72, 22),
     new THREE.MeshBasicMaterial({
       color: def.accent,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.5,
       side: THREE.DoubleSide,
     }),
   );
@@ -121,7 +167,25 @@ export function buildMuse(def: MuseDef): THREE.Group {
   return g;
 }
 
-export function buildPortraitMuse(tex: THREE.Texture, accent: number, id: string): THREE.Group {
+export function applyMuseFace(mesh: THREE.Group, tex: THREE.Texture) {
+  const face = mesh.getObjectByName("face") as THREE.Mesh | undefined;
+  if (!face) return;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  face.material = new THREE.MeshBasicMaterial({ map: tex });
+}
+
+export function animateMuse(mesh: THREE.Group, t: number) {
+  const armL = mesh.getObjectByName("armL");
+  const armR = mesh.getObjectByName("armR");
+  const torso = mesh.getObjectByName("torso");
+  const head = mesh.getObjectByName("head");
+  if (armL) armL.rotation.z = 0.12 + Math.sin(t * 1.6) * 0.12;
+  if (armR) armR.rotation.z = -0.12 - Math.sin(t * 1.6 + 0.4) * 0.12;
+  if (torso) torso.rotation.y = Math.sin(t * 0.8) * 0.05;
+  if (head) head.rotation.y = Math.sin(t * 1.1) * 0.08;
+}
+
+export function buildPortraitMuse(tex: THREE.Texture | null, accent: number, id: string): THREE.Group {
   const g = new THREE.Group();
   g.name = id;
   const dark = mat(0x2a2420, { metal: 0.2 });
@@ -129,7 +193,9 @@ export function buildPortraitMuse(tex: THREE.Texture, accent: number, id: string
   addMesh(g, cyl, dark, 0, 0.08, 0, 0.32, 0.16, 0.32);
   const card = new THREE.Mesh(
     new THREE.PlaneGeometry(1.08, 1.62),
-    new THREE.MeshBasicMaterial({ map: tex }),
+    tex
+      ? new THREE.MeshBasicMaterial({ map: tex })
+      : new THREE.MeshBasicMaterial({ color: accent }),
   );
   card.position.set(0, 1.05, 0.02);
   card.name = "portrait";
@@ -237,32 +303,25 @@ export function buildLantern(color: number): THREE.Group {
 export function buildViewWeapon(w: Weapon | null): THREE.Group {
   const g = new THREE.Group();
   g.name = "viewWeapon";
-  const dark = mat(0x2a2420, { metal: 0.5, rough: 0.4 });
-  const steel = mat(0xb8c4cc, { metal: 0.85, rough: 0.28 });
-  const gold = mat(0xc4a45a, { metal: 0.7, rough: 0.35 });
-  const cyl = new THREE.CylinderGeometry(1, 1, 1, 10);
-  const box = new THREE.BoxGeometry(1, 1, 1);
-  if (!w) {
-    addMesh(g, cyl, dark, 0.18, -0.22, -0.35, 0.04, 0.18, 0.04);
-    return g;
-  }
-  if (w.kind === "gun") {
-    const body = w.tier === 3 ? gold : steel;
-    addMesh(g, box, body, 0.22, -0.18, -0.42, 0.08, 0.1, 0.42);
-    addMesh(g, cyl, dark, 0.22, -0.28, -0.28, 0.035, 0.16, 0.035);
-    addMesh(g, cyl, body, 0.22, -0.14, -0.68, 0.03, 0.22, 0.03);
-    const flash = new THREE.Mesh(
-      new THREE.SphereGeometry(0.05, 8, 6),
-      new THREE.MeshBasicMaterial({ color: 0xffe6a0, transparent: true, opacity: 0 }),
-    );
-    flash.position.set(0.22, -0.14, -0.82);
-    flash.name = "muzzle";
-    g.add(flash);
-  } else {
-    const blade = w.tier === 3 ? gold : steel;
-    addMesh(g, cyl, dark, 0.28, -0.22, -0.38, 0.03, 0.18, 0.03);
-    addMesh(g, box, blade, 0.28, -0.08, -0.62, 0.03, 0.08, 0.55);
-    addMesh(g, box, dark, 0.28, -0.12, -0.42, 0.12, 0.03, 0.04);
-  }
+  const anim = new THREE.Group();
+  anim.name = "anim";
+  g.add(anim);
+  if (!w) return g;
+  const tex = makePixelWeaponTexture(w);
+  const sprite = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.55, 0.82),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide }),
+  );
+  sprite.position.set(0.28, -0.16, -0.55);
+  sprite.rotation.y = -0.18;
+  sprite.name = "pixel";
+  anim.add(sprite);
+  const flash = new THREE.Mesh(
+    new THREE.SphereGeometry(0.07, 8, 6),
+    new THREE.MeshBasicMaterial({ color: w.glow, transparent: true, opacity: 0 }),
+  );
+  flash.position.set(0.42, -0.06, -0.92);
+  flash.name = "muzzle";
+  anim.add(flash);
   return g;
 }

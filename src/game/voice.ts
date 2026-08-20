@@ -2,57 +2,66 @@ import type { MuseId } from "./content";
 
 export type VoiceLine = "greeting" | "success" | "fail" | "hint";
 
-const LINES: Record<MuseId, Record<VoiceLine, string>> = {
+const TONE: Record<MuseId, { pitch: number; rate: number; prefer: string[] }> = {
   luma: {
-    greeting: "Hold up, hunter. I'm Luma. Name the piece that finishes my look, and I'll arm you.",
-    success: "Oh, you saw it! Take this. Don't drop it in the dark.",
-    fail: "Mmm, not that one. A spark just winked out.",
-    hint: "Look up. Something small and sun-shaped sits in my hair.",
+    pitch: 1.38,
+    rate: 0.94,
+    prefer: ["samantha", "karen", "google us english", "zira", "female"],
   },
   ruby: {
-    greeting: "Ruby Finch. I don't step aside for just anyone. What's my flourish?",
-    success: "Ha. Cute eyes. Here's a gun. Don't miss like you almost did.",
-    fail: "Nope. That guess cost you a spark, darling.",
-    hint: "A wide crimson bow. It's not subtle.",
+    pitch: 1.16,
+    rate: 1.14,
+    prefer: ["zira", "samantha", "google us english", "karen", "female"],
   },
   pearl: {
-    greeting: "Pearl Quinn. I see the maze better with one special piece. Which?",
-    success: "Correct. Clarity suits you. Don't squint.",
-    fail: "A reasonable guess. Not mine. Careful.",
-    hint: "Round frames. Pale as a pearl. On my nose.",
+    pitch: 0.86,
+    rate: 0.84,
+    prefer: ["moira", "tessa", "google uk english female", "serena", "fiona", "victoria", "female"],
   },
   cinder: {
-    greeting: "Cinder Hart. I stomp these halls. What's my lucky pair?",
-    success: "Yes! Those boots. Race you — try to keep up.",
-    fail: "Wrong pair. That stumble cost a spark.",
-    hint: "Huge boots. Little stars painted on. You can't miss them.",
+    pitch: 0.68,
+    rate: 1.06,
+    prefer: ["tessa", "moira", "veena", "google uk english female", "female"],
   },
 };
 
-const TONE: Record<MuseId, { pitch: number; rate: number }> = {
-  luma: { pitch: 1.12, rate: 1.02 },
-  ruby: { pitch: 1.08, rate: 1.06 },
-  pearl: { pitch: 1.04, rate: 0.96 },
-  cinder: { pitch: 0.98, rate: 1.04 },
-};
+const MALE = /male|david|daniel|alex|fred|tom|jorge|diego|mark|george|rishi|aaron|arthur|gordon|nicky|nathan/i;
 
-export function princessLine(id: MuseId, kind: VoiceLine) {
-  return LINES[id][kind];
+function femaleVoices(): SpeechSynthesisVoice[] {
+  const all = window.speechSynthesis.getVoices();
+  const females = all.filter((v) => {
+    const n = `${v.name} ${v.voiceURI}`.toLowerCase();
+    if (MALE.test(n) && !/female/.test(n)) return false;
+    return /female|woman|samantha|karen|zira|moira|tessa|serena|fiona|victoria|veena|hazel|susan|linda/.test(n) || v.lang.startsWith("en");
+  });
+  const strict = females.filter((v) => {
+    const n = `${v.name} ${v.voiceURI}`.toLowerCase();
+    return /female|woman|samantha|karen|zira|moira|tessa|serena|fiona|victoria|veena|hazel/.test(n);
+  });
+  return (strict.length ? strict : females).filter((v) => !MALE.test(v.name));
 }
 
-export function speakPrincess(id: MuseId, kind: VoiceLine) {
+function pickVoice(id: MuseId): SpeechSynthesisVoice | null {
+  const list = femaleVoices();
+  if (!list.length) return null;
+  const prefer = TONE[id].prefer;
+  for (const p of prefer) {
+    const hit = list.find((v) => v.name.toLowerCase().includes(p) || v.voiceURI.toLowerCase().includes(p));
+    if (hit) return hit;
+  }
+  const idx = id === "luma" ? 0 : id === "ruby" ? 1 : id === "pearl" ? 2 : 3;
+  return list[idx % list.length] ?? list[0] ?? null;
+}
+
+export function speakPrincess(id: MuseId, text: string) {
   if (typeof window === "undefined" || !window.speechSynthesis) return;
-  const text = LINES[id][kind];
   const tone = TONE[id];
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = "en-US";
+  u.lang = id === "pearl" || id === "cinder" ? "en-GB" : "en-US";
   u.pitch = tone.pitch;
   u.rate = tone.rate;
-  const voices = window.speechSynthesis.getVoices();
-  const pick =
-    voices.find((v) => /en-US/i.test(v.lang) && /female|samantha|google/i.test(v.name)) ??
-    voices.find((v) => /en/i.test(v.lang));
-  if (pick) u.voice = pick;
+  const voice = pickVoice(id);
+  if (voice) u.voice = voice;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(u);
 }
@@ -60,4 +69,9 @@ export function speakPrincess(id: MuseId, kind: VoiceLine) {
 export function hushPrincess() {
   if (typeof window === "undefined" || !window.speechSynthesis) return;
   window.speechSynthesis.cancel();
+}
+
+export function warmVoices() {
+  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  window.speechSynthesis.getVoices();
 }
