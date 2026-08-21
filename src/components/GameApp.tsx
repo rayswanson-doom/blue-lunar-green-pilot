@@ -1,12 +1,16 @@
 import {
   Copy,
   Heart,
+  LogIn,
   Map,
+  Mic,
+  MicOff,
   Pause,
   Play,
   Sparkle,
   Sword,
   Timer,
+  UserPlus,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -19,14 +23,12 @@ import {
   THEMES,
   formatTime,
   makeRoomCode,
-  museById,
-  musePortrait,
+  shrineById,
   readBest,
   type SizeId,
   type ThemeId,
 } from "@/game/content";
-import { hushPrincess, speakPrincess, warmVoices } from "@/game/voice";
-import { riddleFor } from "@/game/riddles";
+import { ECHO_LABEL, type EchoStep } from "@/game/shrine";
 import type { GameHandle, HudState, HuntSettings } from "@/game/engine";
 import { P2PRoom, type PeerInfo } from "@/lib/multiplayer";
 import { cn } from "@/lib/utils";
@@ -57,13 +59,20 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
   const [sizeId, setSizeId] = useState<SizeId>("medium");
   const [themeId, setThemeId] = useState<ThemeId>("victorian");
   const [aiCount, setAiCount] = useState(0);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"link" | "code" | false>(false);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [joinNote, setJoinNote] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [readyIds, setReadyIds] = useState<Record<string, boolean>>({});
   const [matchLive, setMatchLive] = useState(false);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [hostId, setHostId] = useState<string | null>(null);
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [micOn, setMicOn] = useState(true);
+  const [voiceErr, setVoiceErr] = useState<string | null>(null);
   const selfIdRef = useRef(`p-${Math.random().toString(36).slice(2, 10)}`);
+  const readyRef = useRef(false);
+  const readyIdsRef = useRef<Record<string, boolean>>({});
 
   const isHost = useMemo(() => {
     if (!roomCode) return true;
@@ -80,6 +89,28 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
   );
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  readyRef.current = ready;
+  readyIdsRef.current = readyIds;
+
+  const lobbyPacket = useCallback(() => {
+    const selfId = selfIdRef.current;
+    const partyNames: Record<string, string> = {
+      [selfId]: isHost ? "Host" : "Hunter",
+      ...names,
+    };
+    return {
+      t: "lobby" as const,
+      size: settingsRef.current.sizeId,
+      theme: settingsRef.current.themeId,
+      ai: settingsRef.current.aiCount,
+      ready: { ...readyIdsRef.current, [selfId]: isHost ? true : readyRef.current },
+      names: partyNames,
+      hostId: isHost ? selfId : hostId,
+      live: matchLive,
+    };
+  }, [isHost, names, hostId, matchLive]);
+  const lobbyPacketRef = useRef(lobbyPacket);
+  lobbyPacketRef.current = lobbyPacket;
 
   useEffect(() => {
     let g: GameHandle | null = null;
@@ -93,18 +124,13 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
           settings,
           emit: (e) => {
             if (e.type === "hud") setHud(e.state);
-            if (e.type === "muse") {
+            if (e.type === "echo") {
               setWrong(null);
               setLine(null);
-              const theme = gameRef.current?.getState().themeId ?? "victorian";
-              speakPrincess(e.id, riddleFor(e.id, theme).greeting);
             }
             if (e.type === "result") {
               if (e.ok) setLine(`Armed: ${e.weaponName}`);
-              else {
-                setWrong("miss");
-                setLine("Not quite.");
-              }
+              else setWrong("miss");
             }
           },
         });
@@ -129,29 +155,66 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
   }, []);
 
   useEffect(() => {
+    if (!line) return;
+    const t = window.setTimeout(() => setLine(null), 2400);
+    return () => window.clearTimeout(t);
+  }, [line]);
+
+  useEffect(() => {
     if (!roomCode) return;
     const selfId = selfIdRef.current;
+    const host = isHost;
     const p2p = new P2PRoom({
       room: roomCode,
       selfId,
-      name: isHost ? "Host" : "Hunter",
+      name: host ? "Host" : "Hunter",
       onPeersChanged: (list) => {
         const capped = list.slice(0, 3);
         setPeers(capped);
         const g = gameRef.current;
         if (!g) return;
         for (const p of capped) g.syncPeer(p.id, p.name, true);
+        if (host) {
+          window.setTimeout(() => p2p.send(lobbyPacketRef.current()), 40);
+        }
+      },
+      onChannelOpen: (peerId) => {
+        if (host) p2p.send(lobbyPacketRef.current(), peerId);
+        else {
+          p2p.send({ t: "hello", name: "Hunter", ready: readyRef.current }, peerId);
+        }
       },
       onMessage: (from, data) => {
         if (!data || typeof data !== "object") return;
         const msg = data as Record<string, unknown>;
+        if (msg.t === "hello") {
+          setNames((prev) => ({ ...prev, [from]: String(msg.name ?? "Hunter") }));
+          setReadyIds((prev) => ({ ...prev, [from]: Boolean(msg.ready) }));
+          if (host) p2p.send(lobbyPacketRef.current());
+          return;
+        }
         if (msg.t === "lobby") {
           const readyMap = (msg.ready as Record<string, boolean>) ?? {};
           setReadyIds(readyMap);
-          if (typeof msg.readySelf === "boolean") setReady(Boolean(readyMap[selfId]));
-          if (msg.size) setSizeId(msg.size as SizeId);
-          if (msg.theme) setThemeId(msg.theme as ThemeId);
-          if (typeof msg.ai === "number") setAiCount(msg.ai);
+          if (typeof readyMap[selfId] === "boolean") setReady(Boolean(readyMap[selfId]));
+          if (msg.names && typeof msg.names === "object") {
+            setNames(msg.names as Record<string, string>);
+          }
+          if (typeof msg.hostId === "string") setHostId(msg.hostId);
+          if (typeof msg.live === "boolean") setMatchLive(msg.live);
+          const nextSize = (msg.size as SizeId) || settingsRef.current.sizeId;
+          const nextTheme = (msg.theme as ThemeId) || settingsRef.current.themeId;
+          const nextAi = typeof msg.ai === "number" ? msg.ai : settingsRef.current.aiCount;
+          const changed =
+            nextSize !== settingsRef.current.sizeId ||
+            nextTheme !== settingsRef.current.themeId ||
+            nextAi !== settingsRef.current.aiCount;
+          if (msg.size) setSizeId(nextSize);
+          if (msg.theme) setThemeId(nextTheme);
+          if (typeof msg.ai === "number") setAiCount(nextAi);
+          if (!host && changed) {
+            gameRef.current?.configure({ sizeId: nextSize, themeId: nextTheme, aiCount: nextAi });
+          }
           return;
         }
         if (msg.t === "ready") {
@@ -181,14 +244,25 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
     p2pRef.current = p2p;
     void p2p.join().then(() => {
       gameRef.current?.attachNet({
-        role: isHost ? "host" : "client",
+        role: host ? "host" : "client",
         selfId,
         broadcast: (d) => p2p.broadcast(d),
         send: (d, to) => p2p.send(d, to),
       });
-      if (!isHost) setJoinNote("In the lobby — ready up and wait for the host.");
+      setNames((prev) => ({ ...prev, [selfId]: host ? "Host" : "Hunter" }));
+      if (host) {
+        setHostId(selfId);
+        setReadyIds((prev) => ({ ...prev, [selfId]: true }));
+        setReady(true);
+        setJoinNote("Lobby live — share the hunt code. Settings sync to guests.");
+        p2p.send(lobbyPacketRef.current());
+      } else {
+        setJoinNote("Connected — settings follow the host. Ready up when you are.");
+        p2p.send({ t: "hello", name: "Hunter", ready: false });
+      }
     });
     return () => {
+      p2p.setLocalAudio(null);
       p2p.close();
       p2pRef.current = null;
     };
@@ -197,12 +271,7 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
   useEffect(() => {
     const onLock = () => setLocked(Boolean(document.pointerLockElement));
     document.addEventListener("pointerlockchange", onLock);
-    warmVoices();
-    window.speechSynthesis?.addEventListener("voiceschanged", warmVoices);
-    return () => {
-      document.removeEventListener("pointerlockchange", onLock);
-      window.speechSynthesis?.removeEventListener("voiceschanged", warmVoices);
-    };
+    return () => document.removeEventListener("pointerlockchange", onLock);
   }, []);
 
   useEffect(() => {
@@ -226,7 +295,7 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
         const s = g.getState();
         if (s.phase === "playing") g.pause();
         else if (s.phase === "paused") g.resume();
-        else if (s.phase === "encounter") g.dismissMuse();
+        else if (s.phase === "echo") g.dismissEcho();
         return;
       }
       if (e.code === "KeyF") {
@@ -280,6 +349,15 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
     tryPointerLock(viewRef.current);
   }, [settings, roomCode, isHost]);
 
+  const toMenu = useCallback(() => {
+    setHow(false);
+    setWrong(null);
+    setLine(null);
+    setMatchLive(false);
+    document.exitPointerLock?.();
+    gameRef.current?.toMenu();
+  }, []);
+
   const toggleReady = useCallback(() => {
     const next = !ready;
     setReady(next);
@@ -289,14 +367,38 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
 
   useEffect(() => {
     if (!roomCode || !isHost) return;
-    p2pRef.current?.send({
-      t: "lobby",
-      size: sizeId,
-      theme: themeId,
-      ai: aiCount,
-      ready: readyIds,
-    });
-  }, [roomCode, isHost, sizeId, themeId, aiCount, readyIds]);
+    p2pRef.current?.send(lobbyPacketRef.current());
+  }, [roomCode, isHost, sizeId, themeId, aiCount, readyIds, matchLive, peers.length]);
+
+  const toggleVoice = useCallback(async () => {
+    const p2p = p2pRef.current;
+    if (!p2p) return;
+    if (voiceOn) {
+      p2p.setLocalAudio(null);
+      setVoiceOn(false);
+      setMicOn(true);
+      setVoiceErr(null);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
+      });
+      p2p.setLocalAudio(stream);
+      setVoiceOn(true);
+      setMicOn(true);
+      setVoiceErr(null);
+    } catch {
+      setVoiceErr("Mic blocked — allow microphone for this tab.");
+    }
+  }, [voiceOn]);
+
+  const toggleMic = useCallback(() => {
+    const next = !micOn;
+    setMicOn(next);
+    p2pRef.current?.setMicEnabled(next);
+  }, [micOn]);
 
   const createInvite = useCallback(() => {
     const code = makeRoomCode();
@@ -313,18 +415,65 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
     const url = `${window.location.origin}/?room=${roomCode}`;
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
+      setCopied("link");
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
       setCopied(false);
     }
   }, [roomCode]);
 
+  const copyCode = useCallback(async () => {
+    if (!roomCode) return;
+    try {
+      await navigator.clipboard.writeText(roomCode);
+      setCopied("code");
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  }, [roomCode]);
+
+  const joinHunt = useCallback(
+    (raw: string) => {
+      const code = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+      if (code.length < 4) return;
+      try {
+        sessionStorage.removeItem("huntHost");
+      } catch {
+        /* ignore */
+      }
+      void navigate({ to: "/", search: { room: code } });
+    },
+    [navigate],
+  );
+
+  const leaveHunt = useCallback(() => {
+    try {
+      sessionStorage.removeItem("huntHost");
+    } catch {
+      /* ignore */
+    }
+    p2pRef.current?.setLocalAudio(null);
+    setVoiceOn(false);
+    setVoiceErr(null);
+    setPeers([]);
+    setReady(false);
+    setReadyIds({});
+    setNames({});
+    setHostId(null);
+    setMatchLive(false);
+    void navigate({ to: "/", search: { room: undefined } });
+  }, [navigate]);
+
   const onCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const g = gameRef.current;
     if (!g) return;
     const s = g.getState();
     if (s.phase === "title") return;
+    if (s.phase === "echo" && e.button === 0) {
+      g.shoot();
+      return;
+    }
     if (s.phase === "playing" && e.pointerType === "mouse") {
       tryPointerLock(viewRef.current);
       if (e.button === 0) g.shoot();
@@ -354,7 +503,7 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
   };
 
   const phase = hud?.phase ?? "title";
-  const muse = hud?.museId ? museById(hud.museId) : undefined;
+  const shrine = hud?.shrineId ? shrineById(hud.shrineId) : undefined;
   const playing = phase === "playing";
 
   return (
@@ -370,14 +519,20 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
 
       <canvas
         ref={miniRef}
-        width={176}
-        height={176}
+        width={256}
+        height={256}
         className={cn(
-          "pointer-events-none absolute right-4 bottom-4 z-10 h-36 w-36 rounded-xl border border-border/80 shadow-[0_8px_30px_rgba(0,0,0,0.28)] md:h-44 md:w-44",
+          "pointer-events-none absolute right-4 bottom-4 z-10 h-44 w-44 rounded-xl border border-border/80 shadow-[0_8px_30px_rgba(0,0,0,0.28)] md:h-52 md:w-52",
           phase === "title" ? "opacity-0" : "opacity-100",
         )}
         aria-hidden
       />
+
+      {line && (
+        <div className="pointer-events-none absolute top-20 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-border bg-surface/92 px-4 py-2 text-sm shadow-[0_8px_24px_rgba(0,0,0,0.28)]">
+          {line}
+        </div>
+      )}
 
       {playing && hud && (
         <>
@@ -389,6 +544,20 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
         </>
       )}
 
+      {playing && roomCode && (
+        <div className="absolute bottom-4 left-4 z-20 flex gap-2">
+          <Button size="sm" variant={voiceOn ? "primary" : "secondary"} onClick={() => void toggleVoice()}>
+            {voiceOn ? <Mic className="size-4" /> : <MicOff className="size-4" />}
+            {voiceOn ? "Voice on" : "Voice"}
+          </Button>
+          {voiceOn && (
+            <Button size="sm" variant={micOn ? "secondary" : "ghost"} onClick={toggleMic}>
+              {micOn ? "Mute" : "Unmute"}
+            </Button>
+          )}
+        </div>
+      )}
+
       {playing && hud?.prompt && (
         <div className="pointer-events-none absolute bottom-24 left-1/2 z-10 -translate-x-1/2 rounded-lg border border-border bg-surface/90 px-4 py-2 text-sm text-fg backdrop-blur-sm">
           {hud.prompt === "exit"
@@ -397,7 +566,7 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
               ? hud.wallMode === "add"
                 ? "Ghost wall — F to RAISE it (costs a diamond)"
                 : "Ghost wall — F to DROP it (costs a diamond)"
-              : "Approach to answer the princess"}
+              : "Approach the shrine — listen, then repeat WASD + fire"}
         </div>
       )}
 
@@ -423,7 +592,14 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
           joinNote={joinNote}
           playerReady={ready}
           readyCount={Object.values(readyIds).filter(Boolean).length}
+          readyIds={readyIds}
           matchLive={matchLive}
+          names={names}
+          hostId={hostId}
+          selfId={selfIdRef.current}
+          voiceOn={voiceOn}
+          micOn={micOn}
+          voiceErr={voiceErr}
           onHow={() => setHow((v) => !v)}
           onPlay={play}
           onReady={toggleReady}
@@ -432,6 +608,11 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
           onAi={setAiCount}
           onInvite={createInvite}
           onCopy={copyInvite}
+          onCopyCode={copyCode}
+          onJoin={joinHunt}
+          onLeave={leaveHunt}
+          onVoice={toggleVoice}
+          onMic={toggleMic}
         />
       )}
 
@@ -446,36 +627,24 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
             <Button variant="secondary" onClick={() => gameRef.current?.restart()}>
               New maze
             </Button>
+            <Button variant="ghost" onClick={toMenu}>
+              Main menu
+            </Button>
           </div>
         </Modal>
       )}
 
-      {phase === "encounter" && muse && hud && (
-        <Encounter
-          muse={muse}
-          riddle={riddleFor(muse.id, hud.themeId)}
-          hearts={hud.hearts}
-          hint={hud.hint}
-          line={line}
-          wrong={wrong}
+      {phase === "echo" && shrine && hud && (
+        <EchoPanel
+          shrine={shrine}
+          length={hud.echoPattern.length}
+          input={hud.echoInput}
+          flash={hud.echoFlash}
+          beat={hud.echoBeat}
+          status={hud.echoStatus}
           diamonds={hud.diamondHeld}
-          onPick={(id) => {
-            const res = gameRef.current?.answer(id);
-            const rid = riddleFor(muse.id, hud.themeId);
-            if (res?.ok) {
-              setLine(rid.success);
-              speakPrincess(muse.id, rid.success);
-            } else if (res) {
-              setLine(rid.fail);
-              speakPrincess(muse.id, rid.fail);
-              window.setTimeout(() => speakPrincess(muse.id, rid.hint), 900);
-            }
-          }}
-          onBack={() => {
-            hushPrincess();
-            gameRef.current?.dismissMuse();
-          }}
-          portrait={musePortrait(muse.id, hud.themeId)}
+          onStep={(step) => gameRef.current?.echoStep(step)}
+          onBack={() => gameRef.current?.dismissEcho()}
         />
       )}
 
@@ -488,7 +657,7 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
           <dl className="mt-6 grid grid-cols-3 gap-3 text-center">
             <Stat label="Time" value={formatTime(hud.time)} />
             <Stat label="Diamonds" value={`${hud.diamondHeld}/${hud.diamondTotal}`} />
-            <Stat label="Princesses" value={`${hud.charmed}/${hud.museTotal}`} />
+            <Stat label="Shrines" value={`${hud.solved}/${hud.shrineTotal}`} />
           </dl>
           {(best != null || hud.time) && (
             <p className="mt-4 text-sm text-muted">
@@ -498,6 +667,9 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
           <div className="mt-6 flex flex-col gap-2">
             <Button size="lg" onClick={() => gameRef.current?.restart()}>
               Hunt again
+            </Button>
+            <Button variant="secondary" onClick={toMenu}>
+              Main menu
             </Button>
           </div>
         </Modal>
@@ -512,6 +684,9 @@ export function GameApp({ roomCode }: { roomCode?: string }) {
           <div className="mt-6 flex flex-col gap-2">
             <Button size="lg" onClick={() => gameRef.current?.restart()}>
               Try another maze
+            </Button>
+            <Button variant="secondary" onClick={toMenu}>
+              Main menu
             </Button>
           </div>
         </Modal>
@@ -577,7 +752,7 @@ function Hud({
       <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
         <div className="pointer-events-none hidden items-center gap-1.5 rounded-lg border border-border bg-surface/85 px-2.5 py-1.5 text-xs text-muted backdrop-blur-sm md:flex">
           <Map className="size-3.5" />
-          {hud.charmed}/{hud.museTotal} princesses
+          {hud.solved}/{hud.shrineTotal} shrines
         </div>
         <Button variant="secondary" size="sm" onClick={onPause} aria-label="Pause">
           <Pause className="size-4" />
@@ -610,6 +785,7 @@ function TitleScreen({
   joinNote,
   playerReady,
   readyCount,
+  readyIds,
   matchLive,
   onHow,
   onPlay,
@@ -619,6 +795,17 @@ function TitleScreen({
   onAi,
   onInvite,
   onCopy,
+  onCopyCode,
+  onJoin,
+  onLeave,
+  names,
+  hostId,
+  selfId,
+  voiceOn,
+  micOn,
+  voiceErr,
+  onVoice,
+  onMic,
 }: {
   how: boolean;
   engineReady: boolean;
@@ -627,11 +814,12 @@ function TitleScreen({
   aiCount: number;
   roomCode?: string;
   isHost: boolean;
-  copied: boolean;
+  copied: "link" | "code" | false;
   peers: PeerInfo[];
   joinNote: string | null;
   playerReady: boolean;
   readyCount: number;
+  readyIds: Record<string, boolean>;
   matchLive: boolean;
   onHow: () => void;
   onPlay: () => void;
@@ -641,7 +829,19 @@ function TitleScreen({
   onAi: (n: number) => void;
   onInvite: () => void;
   onCopy: () => void;
+  onCopyCode: () => void;
+  onJoin: (code: string) => void;
+  onLeave: () => void;
+  names: Record<string, string>;
+  hostId: string | null;
+  selfId: string;
+  voiceOn: boolean;
+  micOn: boolean;
+  voiceErr: string | null;
+  onVoice: () => void;
+  onMic: () => void;
 }) {
+  const [joinCode, setJoinCode] = useState("");
   return (
     <div className="absolute inset-0 z-20 flex flex-col justify-end bg-gradient-to-t from-bg via-bg/70 to-transparent p-4 md:justify-center md:p-10">
       <header className="absolute top-4 right-4">
@@ -655,24 +855,101 @@ function TitleScreen({
           {APP_NAME}
         </h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
-          Race AI hunters for diamonds. Spend a diamond to raise or drop a wall. Answer each
-          princess to swap in a sword or gun — quality scales with how many gems you hold. The
-          exit stays sealed until every princess and every diamond is found.
+          Race AI hunters for diamonds. Spend a diamond to raise or drop a wall. Echo shrines arm
+          you — listen to the pattern, repeat it with WASD and fire. Weapon quality scales with gems
+          you hold. The exit stays sealed until every shrine is solved and every diamond is found.
         </p>
 
         {roomCode && (
           <div className="mt-4 rounded-lg border border-border bg-elevated px-3 py-2 text-sm">
             Hunt code <span className="font-medium tracking-wider">{roomCode}</span>
             {` · party ${Math.min(4, peers.length + 1)}/4`}
-            {isHost ? ` · ${readyCount} ready` : ""}
+            {isHost ? ` · ${readyCount} ready` : " · guest"}
             {joinNote ? ` · ${joinNote}` : ""}
             {matchLive ? " · hunt live" : ""}
+            {voiceErr ? ` · ${voiceErr}` : ""}
+            <p className="mt-1 text-xs text-muted">
+              Friends join from the lobby with this code, or open the invite link.
+            </p>
           </div>
+        )}
+
+        {!roomCode && (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-border bg-elevated p-3">
+              <p className="text-xs tracking-[0.16em] text-muted uppercase">Host a hunt</p>
+              <p className="mt-1 text-sm text-muted">Make a lobby. Share the code. Settings stay in sync.</p>
+              <Button variant="secondary" size="lg" className="mt-3 w-full" onClick={onInvite}>
+                <UserPlus className="size-4" />
+                Create lobby
+              </Button>
+            </div>
+            <form
+              className="rounded-lg border border-accent/40 bg-elevated p-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                onJoin(joinCode);
+              }}
+            >
+              <p className="text-xs tracking-[0.16em] text-muted uppercase">Join a hunt</p>
+              <p className="mt-1 text-sm text-muted">Paste the host’s 5-character hunt code.</p>
+              <input
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                placeholder="e.g. 7K2QM"
+                maxLength={8}
+                spellCheck={false}
+                autoCapitalize="characters"
+                className="mt-3 min-h-10 w-full rounded-md border border-border bg-surface px-3 font-medium tracking-[0.18em] text-fg placeholder:tracking-normal placeholder:text-muted"
+                aria-label="Hunt code"
+              />
+              <Button type="submit" size="lg" className="mt-2 w-full" disabled={joinCode.trim().length < 4}>
+                <LogIn className="size-4" />
+                Join hunt
+              </Button>
+            </form>
+          </div>
+        )}
+
+        {roomCode && (
+          <ul className="mt-3 space-y-1.5 text-sm">
+            <li className="flex items-center justify-between rounded-md border border-border bg-elevated px-3 py-1.5">
+              <span>
+                {names[selfId] ?? (isHost ? "Host" : "Hunter")}
+                {isHost || hostId === selfId ? " · host" : ""}
+                {" · you"}
+              </span>
+              <span className="text-xs tracking-wide text-muted uppercase">
+                {isHost || playerReady ? "Ready" : "Not ready"}
+              </span>
+            </li>
+            {peers.map((p) => (
+              <li
+                key={p.id}
+                className="flex items-center justify-between rounded-md border border-border bg-elevated px-3 py-1.5"
+              >
+                <span>
+                  {names[p.id] ?? p.name}
+                  {hostId === p.id ? " · host" : ""}
+                  <span className="ml-2 text-xs text-muted">{p.connectionState}</span>
+                </span>
+                <span className="text-xs tracking-wide text-muted uppercase">
+                  {p.connectionState !== "connected"
+                    ? p.connectionState
+                    : readyIds[p.id]
+                      ? "Ready"
+                      : "Not ready"}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
 
         <div className="mt-5 grid gap-4">
           <fieldset>
-            <legend className="mb-2 text-xs tracking-[0.16em] text-muted uppercase">Map size</legend>
+            <legend className="mb-2 text-xs tracking-[0.16em] text-muted uppercase">
+              Map size{roomCode && !isHost ? " · host locked" : ""}
+            </legend>
             <div className="grid grid-cols-3 gap-2">
               {SIZES.map((s) => (
                 <Choice
@@ -727,9 +1004,11 @@ function TitleScreen({
           <ul className="mt-4 space-y-2 text-sm text-fg">
             <li>WASD to move. Mouse to look. Click to fire once you have a weapon.</li>
             <li>A ghost wall shows before you spend a diamond. F commits.</li>
-            <li>Each princess swaps your weapon. More gems, better steel.</li>
+            <li>Each shrine plays a pattern. Repeat it with WASD + fire to take its weapon.</li>
+            <li>A correct echo reveals a minimap quadrant. A miss mutates the tune and a wall.</li>
             <li>Solo mode has no AI rivals. Add 1–4 hunters if you want a fight.</li>
-            <li>Invite up to three friends. Ready up. Host freezes the maze when they hit Play.</li>
+            <li>Host creates a lobby, shares the hunt code. Guests Join hunt. Map settings sync live.</li>
+            <li>Turn on Voice in the lobby to talk over the same connection.</li>
           </ul>
         )}
 
@@ -745,15 +1024,36 @@ function TitleScreen({
               {playerReady ? "Ready" : "Click to ready"}
             </Button>
           )}
-          {!roomCode && (
-            <Button variant="secondary" size="lg" onClick={onInvite} className="sm:flex-1">
-              Invite friends
+          {roomCode && (
+            <Button
+              variant={voiceOn ? "primary" : "secondary"}
+              size="lg"
+              onClick={onVoice}
+              className="sm:flex-1"
+            >
+              {voiceOn ? <Mic className="size-4" /> : <MicOff className="size-4" />}
+              {voiceOn ? "Voice on" : "Enable voice"}
+            </Button>
+          )}
+          {roomCode && voiceOn && (
+            <Button variant="ghost" size="lg" onClick={onMic}>
+              {micOn ? "Mute mic" : "Unmute mic"}
             </Button>
           )}
           {roomCode && isHost && (
-            <Button variant="secondary" size="lg" onClick={onCopy} className="sm:flex-1">
-              <Copy className="size-4" />
-              {copied ? "Copied" : "Copy invite link"}
+            <>
+              <Button variant="secondary" size="lg" onClick={onCopy} className="sm:flex-1">
+                <Copy className="size-4" />
+                {copied === "link" ? "Link copied" : "Copy invite link"}
+              </Button>
+              <Button variant="secondary" size="lg" onClick={onCopyCode} className="sm:flex-1">
+                {copied === "code" ? "Code copied" : "Copy hunt code"}
+              </Button>
+            </>
+          )}
+          {roomCode && (
+            <Button variant="ghost" size="lg" onClick={onLeave}>
+              Leave lobby
             </Button>
           )}
           <Button variant="ghost" size="lg" onClick={onHow}>
@@ -793,82 +1093,110 @@ function Choice({
   );
 }
 
-function Encounter({
-  muse,
-  riddle,
-  hearts,
-  hint,
-  line,
-  wrong,
+function EchoPanel({
+  shrine,
+  length,
+  input,
+  flash,
+  beat,
+  status,
   diamonds,
-  portrait,
-  onPick,
+  onStep,
   onBack,
 }: {
-  muse: NonNullable<ReturnType<typeof museById>>;
-  riddle: ReturnType<typeof riddleFor>;
-  hearts: number;
-  hint: boolean;
-  line: string | null;
-  wrong: string | null;
+  shrine: NonNullable<ReturnType<typeof shrineById>>;
+  length: number;
+  input: EchoStep[];
+  flash: EchoStep | null;
+  beat: number;
+  status: "listen" | "repeat" | "fail" | null;
   diamonds: number;
-  portrait: string;
-  onPick: (id: string) => void;
+  onStep: (step: EchoStep) => void;
   onBack: () => void;
 }) {
+  const copy =
+    status === "listen"
+      ? "Listen. Watch the pads. Don't touch anything yet."
+      : status === "fail"
+        ? "Off-beat. A wall shifted and the echo mutated — listen again."
+        : "Repeat the echo. WASD and fire.";
+  const slots = Array.from({ length: Math.max(1, length) });
   return (
-    <div className="absolute inset-0 z-20 flex items-stretch justify-center bg-bg/80 p-2 backdrop-blur-[2px] md:p-6">
-      <div className="flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-[0_20px_60px_rgba(0,0,0,0.4)] md:flex-row">
-        <div className="relative min-h-[42%] flex-1 bg-elevated md:min-h-0 md:w-[54%]">
-          <video
-            key={muse.video}
-            className="h-full w-full object-cover"
-            src={muse.video}
-            poster={portrait}
-            autoPlay
-            loop
-            muted
-            playsInline
-          />
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-bg/85 to-transparent p-4">
-            <p className="text-xs tracking-[0.16em] text-muted uppercase">{muse.title}</p>
-            <p className="font-display text-2xl">{muse.name}</p>
-          </div>
+    <div className="absolute inset-x-0 bottom-0 z-20 flex items-end justify-center bg-gradient-to-t from-bg/85 via-bg/30 to-transparent p-3 md:p-5">
+      <div
+        className={cn(
+          "w-full max-w-lg rounded-xl border bg-surface/95 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.4)] md:p-6",
+          status === "fail" ? "border-heart" : "border-border",
+        )}
+      >
+        <p className="text-xs tracking-[0.16em] text-muted uppercase">{shrine.title}</p>
+        <h2 className="mt-1 font-display text-3xl tracking-tight">{shrine.name}</h2>
+        <p className="mt-2 text-sm text-muted">{shrine.hint}</p>
+        <p className="mt-3 text-sm text-fg">{copy}</p>
+        <p className="mt-1 text-xs text-muted">{diamonds} diamonds on you — weapon quality scales</p>
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {slots.map((_, i) => (
+            <span
+              key={i}
+              className={cn(
+                "inline-flex min-h-9 min-w-9 items-center justify-center rounded-md border px-2 py-1 text-center text-sm font-medium",
+                status === "listen" && i === beat
+                  ? "border-accent bg-accent text-accent-fg"
+                  : i < input.length
+                    ? "border-accent/60 bg-elevated text-fg"
+                    : "border-border bg-elevated text-muted",
+              )}
+            >
+              {i < input.length ? ECHO_LABEL[input[i]!] : "·"}
+            </span>
+          ))}
         </div>
-        <div className="flex min-h-0 w-full flex-col gap-4 overflow-y-auto p-5 md:w-[46%] md:p-7">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-1">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Heart
-                  key={i}
-                  className={cn("size-4", i < hearts ? "fill-heart text-heart" : "text-subtle")}
-                />
-              ))}
-            </div>
-            <p className="text-xs text-muted">{diamonds} diamonds on you — weapon quality scales</p>
-          </div>
-          <p className="text-sm leading-relaxed text-fg">{line ?? riddle.greeting}</p>
-          {hint && <p className="text-sm text-muted">{riddle.hint}</p>}
-          <div className="mt-auto flex flex-col gap-2">
-            {riddle.options.map((opt) => (
-              <Button
-                key={opt.id}
-                variant="choice"
-                size="choice"
-                className="w-full justify-start"
-                onClick={() => onPick(opt.id)}
-              >
-                {opt.label}
-              </Button>
-            ))}
-            <Button variant="ghost" onClick={onBack}>
-              Step back
-            </Button>
-          </div>
-          {wrong && <span className="sr-only">Wrong accessory</span>}
+        <div className="mt-5 grid grid-cols-3 gap-2">
+          <div />
+          <Pad lit={flash === "w"} disabled={status !== "repeat"} label="W" onClick={() => onStep("w")} />
+          <div />
+          <Pad lit={flash === "a"} disabled={status !== "repeat"} label="A" onClick={() => onStep("a")} />
+          <Pad lit={flash === "s"} disabled={status !== "repeat"} label="S" onClick={() => onStep("s")} />
+          <Pad lit={flash === "d"} disabled={status !== "repeat"} label="D" onClick={() => onStep("d")} />
+          <Button
+            variant="choice"
+            size="choice"
+            className={cn("col-span-3 justify-center", flash === "f" && "border-accent bg-accent/20")}
+            disabled={status !== "repeat"}
+            onClick={() => onStep("f")}
+          >
+            Fire
+          </Button>
         </div>
+        <Button variant="ghost" className="mt-3 w-full" onClick={onBack}>
+          Step back
+        </Button>
       </div>
     </div>
+  );
+}
+
+function Pad({
+  lit,
+  disabled,
+  label,
+  onClick,
+}: {
+  lit: boolean;
+  disabled: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      variant="choice"
+      size="choice"
+      className={cn("justify-center text-lg", lit && "border-accent bg-accent/25")}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {label}
+    </Button>
   );
 }
 

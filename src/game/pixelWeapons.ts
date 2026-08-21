@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { MuseId, ThemeId, Weapon, WeaponKind } from "./content";
+import type { ShrineId, ThemeId, Weapon, WeaponKind } from "./content";
 
 function hex(n: number) {
   return `#${n.toString(16).padStart(6, "0")}`;
@@ -12,7 +12,7 @@ function px(ctx: CanvasRenderingContext2D, x: number, y: number, c: string, w = 
 
 function drawSword(
   ctx: CanvasRenderingContext2D,
-  muse: MuseId,
+  shrine: ShrineId,
   blade: string,
   glow: string,
   grip: string,
@@ -26,7 +26,7 @@ function drawSword(
   px(ctx, 14, 36, g, 4, 10);
   px(ctx, 13, 35, dark, 6, 2);
   px(ctx, 12, 34, o, 8, 2); // guard
-  if (muse === "luma") {
+  if (shrine === "luma") {
     px(ctx, 14, 44, o, 4, 3); // lantern pommel
     px(ctx, 15, 45, "#fff4c8", 2, 2);
     px(ctx, 13, 8, o, 6, 26);
@@ -43,7 +43,7 @@ function drawSword(
 
 function drawGun(
   ctx: CanvasRenderingContext2D,
-  muse: MuseId,
+  shrine: ShrineId,
   blade: string,
   glow: string,
   grip: string,
@@ -52,7 +52,7 @@ function drawGun(
   const b = blade;
   const o = glow;
   const dark = "#141210";
-  if (muse === "cinder") {
+  if (shrine === "cinder") {
     // chunky scattergun
     px(ctx, 8, 28, g, 6, 12);
     px(ctx, 10, 22, dark, 14, 10);
@@ -78,12 +78,12 @@ export function makePixelWeaponTexture(w: Weapon): THREE.CanvasTexture {
   const ctx = c.getContext("2d")!;
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, 32, 48);
-  const muse = w.museId ?? "luma";
+  const shrine = w.shrineId ?? "luma";
   const blade = hex(w.blade);
   const glow = hex(w.glow);
   const grip = hex(w.grip);
-  if (w.kind === "sword") drawSword(ctx, muse, blade, glow, grip);
-  else drawGun(ctx, muse, blade, glow, grip);
+  if (w.kind === "sword") drawSword(ctx, shrine, blade, glow, grip);
+  else drawGun(ctx, shrine, blade, glow, grip);
 
   const t = new THREE.CanvasTexture(c);
   t.magFilter = THREE.NearestFilter;
@@ -94,6 +94,6 @@ export function makePixelWeaponTexture(w: Weapon): THREE.CanvasTexture {
   return t;
 }
 
-export function pixelWeaponLabel(kind: WeaponKind, muse: MuseId, theme: ThemeId) {
-  return `${muse}-${kind}-${theme}`;
+export function pixelWeaponLabel(kind: WeaponKind, shrine: ShrineId, theme: ThemeId) {
+  return `${shrine}-${kind}-${theme}`;
 }

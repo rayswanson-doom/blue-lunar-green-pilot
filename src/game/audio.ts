@@ -1,5 +1,6 @@
 import { CONFIG, THEME_SOUND } from "./config";
-import type { Weapon } from "./content";
+import type { ThemeId, Weapon } from "./content";
+import type { EchoStep } from "./shrine";
 
 export type GameAudio = {
   resume: () => void;
@@ -9,12 +10,12 @@ export type GameAudio = {
   fail: () => void;
   step: () => void;
   win: () => void;
-  charm: () => void;
   shoot: () => void;
   slash: () => void;
   fireWeapon: (w: Weapon) => void;
   hit: () => void;
   wall: () => void;
+  echo: (step: EchoStep, themeId: ThemeId) => void;
 };
 
 export function createAudio(): GameAudio {
@@ -158,10 +159,6 @@ export function createAudio(): GameAudio {
       tone(784, 0.3, "sine", 0.05);
       tone(1046, 0.45, "triangle", 0.04);
     },
-    charm: () => {
-      tone(660, 0.12, "sine", 0.04);
-      tone(880, 0.2, "triangle", 0.035);
-    },
     shoot: () => {
       noise(0.08, 0.06);
       tone(420, 0.07, "square", 0.03, 90);
@@ -175,6 +172,26 @@ export function createAudio(): GameAudio {
     wall: () => {
       noise(0.1, 0.04);
       tone(110, 0.12, "sine", 0.04, 50);
+    },
+    echo: (step: EchoStep, themeId: ThemeId) => {
+      const th = THEME_SOUND[themeId];
+      const freq = step === "w" ? 392 : step === "a" ? 330 : step === "s" ? 262 : step === "d" ? 440 : 523;
+      if (themeId === "cyberpunk") {
+        tone(freq * th.color, 0.07, "square", 0.05, freq * 0.55);
+        tone(freq * 2.4, 0.04, "square", 0.018);
+      } else if (themeId === "battlefield") {
+        noise(0.08, 0.05 * th.noise, th.crunch);
+        tone(freq * 0.45 * th.color, 0.12, "sine", 0.045, 55);
+      } else if (themeId === "forest") {
+        tone(freq * 1.55, 0.09, "sine", 0.035, freq * 2.15);
+        tone(freq * 2.2, 0.06, "sine", 0.018, freq * 1.7);
+      } else if (themeId === "hell") {
+        noise(0.07, 0.04 * th.noise, th.crunch);
+        tone(freq * 0.55 * th.color, 0.16, "sawtooth", 0.045, 70);
+      } else {
+        tone(freq * th.color, step === "f" ? 0.16 : 0.12, "triangle", 0.05);
+        tone(freq * 2, 0.08, "sine", 0.016);
+      }
     },
   };
 }

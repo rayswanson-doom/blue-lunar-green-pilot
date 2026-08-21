@@ -82,48 +82,48 @@ export const THEMES: ThemeDef[] = [
     id: "cyberpunk",
     label: "Futuristic Cyberpunk",
     hint: "Wet metal, teal neon, night rain",
-    fog: 0x152028,
-    fogNear: 10,
-    fogFar: 40,
-    hemiSky: 0x7ec8e0,
-    hemiGround: 0x243040,
-    sun: 0x9ee0f2,
-    sunInt: 0.85,
-    fill: 0xe08a5a,
-    bg: 0x101820,
-    wallA: 0x2a3a4a,
-    wallB: 0x324656,
-    wallC: 0x223038,
-    cap: 0x4ab8c8,
-    floorA: 0x1c2834,
-    floorB: 0x243038,
-    ground: 0x121a22,
-    accent: 0x3ec3d6,
-    lantern: 0x5ce1f2,
+    fog: 0x4a6a7c,
+    fogNear: 18,
+    fogFar: 58,
+    hemiSky: 0xc8f0ff,
+    hemiGround: 0x4a6878,
+    sun: 0xd8f6ff,
+    sunInt: 1.45,
+    fill: 0xffb08a,
+    bg: 0x3a5464,
+    wallA: 0x5a7388,
+    wallB: 0x678092,
+    wallC: 0x4e6a7c,
+    cap: 0x6ad4e4,
+    floorA: 0x4a6274,
+    floorB: 0x567084,
+    ground: 0x3a5060,
+    accent: 0x5ce1f2,
+    lantern: 0x8af0ff,
     sky: "/game/sky-cyberpunk.jpg",
   },
   {
     id: "battlefield",
     label: "Battlefield",
     hint: "Mud, brick, and smoke at dusk",
-    fog: 0x6b6356,
-    fogNear: 10,
-    fogFar: 38,
-    hemiSky: 0xe0c49a,
-    hemiGround: 0x4a463c,
-    sun: 0xf0c48a,
-    sunInt: 0.85,
-    fill: 0x8a9094,
-    bg: 0x5c564c,
-    wallA: 0x8a6e55,
-    wallB: 0x7a5f48,
-    wallC: 0x6e5644,
-    cap: 0x4d453c,
-    floorA: 0x6b5a45,
-    floorB: 0x5e4e3c,
-    ground: 0x4a4034,
-    accent: 0xb57a3a,
-    lantern: 0xe0a05a,
+    fog: 0xc4b498,
+    fogNear: 16,
+    fogFar: 52,
+    hemiSky: 0xffe8c4,
+    hemiGround: 0x8a7a60,
+    sun: 0xffd8a0,
+    sunInt: 1.4,
+    fill: 0xc8d0d4,
+    bg: 0xb8a888,
+    wallA: 0xb89270,
+    wallB: 0xa88264,
+    wallC: 0xc09a78,
+    cap: 0x6a5c4c,
+    floorA: 0x9a8064,
+    floorB: 0x8c7458,
+    ground: 0x7a6850,
+    accent: 0xd4924a,
+    lantern: 0xffc070,
     sky: "/game/sky-battlefield.jpg",
   },
   {
@@ -154,24 +154,24 @@ export const THEMES: ThemeDef[] = [
     id: "forest",
     label: "Forest",
     hint: "Moss, timber, and green mist",
-    fog: 0x8aa67a,
-    fogNear: 10,
-    fogFar: 36,
-    hemiSky: 0xd8e8c8,
-    hemiGround: 0x3a4a30,
-    sun: 0xf0e6b8,
-    sunInt: 1.05,
-    fill: 0x7a9a68,
-    bg: 0x8aa67a,
-    wallA: 0x5c4632,
-    wallB: 0x4e3c2c,
-    wallC: 0x6a523c,
-    cap: 0x3d6b3a,
-    floorA: 0x4a5c38,
-    floorB: 0x3e4e30,
-    ground: 0x2f3a24,
-    accent: 0x6db36a,
-    lantern: 0xe8d48a,
+    fog: 0xc4d8a8,
+    fogNear: 16,
+    fogFar: 52,
+    hemiSky: 0xf4ffe0,
+    hemiGround: 0x6a8a50,
+    sun: 0xfff6c8,
+    sunInt: 1.45,
+    fill: 0xa8c888,
+    bg: 0xb8c898,
+    wallA: 0x8a6a48,
+    wallB: 0x7c5e40,
+    wallC: 0x9a7a54,
+    cap: 0x5a9a48,
+    floorA: 0x6e9250,
+    floorB: 0x628448,
+    ground: 0x54743c,
+    accent: 0x7ec86a,
+    lantern: 0xffe8a0,
     sky: "/game/sky-forest.jpg",
   },
 ];
@@ -180,136 +180,54 @@ export function themeById(id: string | undefined): ThemeDef {
   return THEMES.find((t) => t.id === id) ?? THEMES[0]!;
 }
 
-export type AccessoryId =
-  | "crown"
-  | "ribbon"
-  | "spectacles"
-  | "boots"
-  | "umbrella"
-  | "watch"
-  | "raincoat"
-  | "fan"
-  | "gloves"
-  | "teacup";
+export type ShrineId = "luma" | "ruby" | "pearl" | "cinder";
 
-export type MuseId = "luma" | "ruby" | "pearl" | "cinder";
-
-export type MuseDef = {
-  id: MuseId;
+export type ShrineDef = {
+  id: ShrineId;
   name: string;
   title: string;
-  greeting: string;
-  success: string;
-  fail: string;
-  hint: string;
-  correct: AccessoryId;
-  options: { id: AccessoryId; label: string }[];
-  portrait: string;
-  video: string;
-  suit: number;
-  accent: number;
-  hair: number;
-  skin: number;
   reward: WeaponKind;
+  accent: number;
+  hint: string;
 };
 
-export const MUSES: MuseDef[] = [
+export const SHRINES: ShrineDef[] = [
   {
     id: "luma",
-    name: "Princess Luma Vale",
-    title: "Lantern keeper",
-    greeting: "Hold up, hunter. I'm Luma. Name the piece that finishes my look, and I'll arm you.",
-    success: "Oh, you saw it! Take this. Don't drop it in the dark.",
-    fail: "Mmm, not that one. A spark just winked out.",
-    hint: "Look up — something small and sun-shaped sits in her hair.",
-    correct: "crown",
-    options: [
-      { id: "crown", label: "Sunburst crown" },
-      { id: "umbrella", label: "Cloud umbrella" },
-      { id: "gloves", label: "Garden gloves" },
-    ],
-    portrait: "/game/luma.jpg",
-    video: "/game/luma.mp4",
-    suit: 0xe8d7c0,
-    accent: 0x6db3a8,
-    hair: 0xe8c15a,
-    skin: 0xf0c4a8,
+    name: "Gale Shrine",
+    title: "North echo",
     reward: "sword",
+    accent: 0x6db3a8,
+    hint: "Wind first — high notes, then the strike.",
   },
   {
     id: "ruby",
-    name: "Princess Ruby Finch",
-    title: "Corridor spark",
-    greeting: "Ruby Finch. I don't step aside for just anyone. What's my flourish?",
-    success: "Ha. Cute eyes. Here's a gun. Don't miss like you almost did.",
-    fail: "Nope. That guess cost you a spark, darling.",
-    hint: "A wide crimson bow is tied through her copper hair.",
-    correct: "ribbon",
-    options: [
-      { id: "watch", label: "Pocket watch" },
-      { id: "ribbon", label: "Crimson ribbon" },
-      { id: "teacup", label: "Travel teacup" },
-    ],
-    portrait: "/game/ruby.jpg",
-    video: "/game/ruby.mp4",
-    suit: 0xd4785a,
-    accent: 0xf2e2cf,
-    hair: 0xb8432a,
-    skin: 0xebb59a,
+    name: "Spark Shrine",
+    title: "East echo",
     reward: "gun",
+    accent: 0xd4785a,
+    hint: "Short, hot bursts. Don't rush the last beat.",
   },
   {
     id: "pearl",
-    name: "Princess Pearl Quinn",
-    title: "Quiet halls",
-    greeting: "Pearl Quinn. I see the maze better with one special piece. Which?",
-    success: "Correct. Clarity suits you. Don't squint.",
-    fail: "A reasonable guess. Not mine. Careful.",
-    hint: "Round frames rest on her nose — pale as a pearl.",
-    correct: "spectacles",
-    options: [
-      { id: "raincoat", label: "Sky raincoat" },
-      { id: "fan", label: "Paper fan" },
-      { id: "spectacles", label: "Pearl spectacles" },
-    ],
-    portrait: "/game/pearl.jpg",
-    video: "/game/pearl.mp4",
-    suit: 0x7eb4d4,
-    accent: 0xf7f4ee,
-    hair: 0xddd6c8,
-    skin: 0xf3d0b8,
+    name: "Tide Shrine",
+    title: "South echo",
     reward: "sword",
+    accent: 0x7eb4d4,
+    hint: "A slow count. Leave space between pulses.",
   },
   {
     id: "cinder",
-    name: "Princess Cinder Hart",
-    title: "Trail stomper",
-    greeting: "Cinder Hart. I stomp these halls. What's my lucky pair?",
-    success: "Yes! Those boots. Race you — try to keep up.",
-    fail: "Wrong pair. That stumble cost a spark.",
-    hint: "Her boots are huge — and painted with little stars.",
-    correct: "boots",
-    options: [
-      { id: "boots", label: "Star boots" },
-      { id: "fan", label: "Paper fan" },
-      { id: "watch", label: "Pocket watch" },
-    ],
-    portrait: "/game/cinder.jpg",
-    video: "/game/cinder.mp4",
-    suit: 0x3f6b4e,
-    accent: 0xd4a24a,
-    hair: 0x8a3a22,
-    skin: 0xe2b394,
+    name: "Root Shrine",
+    title: "West echo",
     reward: "gun",
+    accent: 0x3f6b4e,
+    hint: "Low drums. Stamp the fire on the last beat.",
   },
 ];
 
-export function musePortrait(id: MuseId, theme: ThemeId) {
-  return `/game/princess/${id}-${theme}.jpg`;
-}
-
-export function museById(id: string): MuseDef | undefined {
-  return MUSES.find((m) => m.id === id);
+export function shrineById(id: string): ShrineDef | undefined {
+  return SHRINES.find((s) => s.id === id);
 }
 
 export type Weapon = {
@@ -322,7 +240,7 @@ export type Weapon = {
   blade: number;
   glow: number;
   grip: number;
-  museId: MuseId;
+  shrineId: ShrineId;
   themeId: ThemeId;
   style: FireStyle;
   pellets: number;
@@ -351,11 +269,11 @@ const THEME_STEEL: Record<ThemeId, { blade: number; glow: number; grip: number; 
   forest: { blade: 0xc4b070, glow: 0x6db36a, grip: 0x3a2a18, sword: "livingwood", gun: "flint" },
 };
 
-const MUSE_EDGE: Record<MuseId, { sword: string; gun: string }> = {
-  luma: { sword: "Lantern", gun: "Beacon" },
-  ruby: { sword: "Ribbon", gun: "Spark" },
-  pearl: { sword: "Quiet", gun: "Pearl" },
-  cinder: { sword: "Trail", gun: "Stomp" },
+const SHRINE_EDGE: Record<ShrineId, { sword: string; gun: string }> = {
+  luma: { sword: "Gale", gun: "Beacon" },
+  ruby: { sword: "Spark", gun: "Burst" },
+  pearl: { sword: "Tide", gun: "Pearl" },
+  cinder: { sword: "Root", gun: "Stomp" },
 };
 
 export function weaponTier(diamonds: number): 1 | 2 | 3 {
@@ -368,17 +286,17 @@ export function makeWeapon(
   kind: WeaponKind,
   diamonds: number,
   themeId: ThemeId = "victorian",
-  museId: MuseId = "luma",
+  shrineId: ShrineId = "luma",
 ): Weapon {
   const tier = weaponTier(diamonds);
   const stats = kind === "sword" ? SWORD[tier] : GUN[tier];
   const steel = THEME_STEEL[themeId];
-  const muse = MUSE_EDGE[museId];
-  const feel = WEAPON_FEEL[museId];
+  const edge = SHRINE_EDGE[shrineId];
+  const feel = WEAPON_FEEL[shrineId];
   const tm = THEME_COMBAT[themeId];
   const grade = tier === 3 ? "prism" : tier === 2 ? "fine" : "rough";
   const noun = kind === "sword" ? steel.sword : steel.gun;
-  const title = kind === "sword" ? muse.sword : muse.gun;
+  const title = kind === "sword" ? edge.sword : edge.gun;
   return {
     kind,
     tier,
@@ -390,7 +308,7 @@ export function makeWeapon(
     blade: steel.blade,
     glow: steel.glow,
     grip: steel.grip,
-    museId,
+    shrineId,
     themeId,
     style: feel.style,
     pellets: feel.pellets,
@@ -399,19 +317,6 @@ export function makeWeapon(
     pierce: feel.pierce,
     recoil: feel.recoil,
   };
-}
-
-export function musePalette(def: MuseDef, theme: ThemeId) {
-  const hair = def.id === "luma" ? 0xb8894a : def.id === "ruby" ? 0xb8432a : def.id === "pearl" ? 0x1a1410 : 0xc4a05a;
-  const skin = def.id === "pearl" ? 0xc48a6a : def.id === "ruby" ? 0xe0a888 : 0xe8c4a8;
-  const suits: Record<ThemeId, number> = {
-    victorian: def.suit,
-    cyberpunk: def.id === "luma" ? 0x1a3a48 : def.id === "ruby" ? 0x6a2030 : def.id === "pearl" ? 0xd8e4ea : 0x3a4a32,
-    battlefield: def.id === "luma" ? 0xc4b08a : def.id === "ruby" ? 0x8a4a38 : def.id === "pearl" ? 0xc8c0b0 : 0x5a6a48,
-    hell: def.id === "luma" ? 0x4a2018 : def.id === "ruby" ? 0x6a1818 : def.id === "pearl" ? 0xd8d0c4 : 0x3a2418,
-    forest: def.id === "luma" ? 0x4a6a3a : def.id === "ruby" ? 0x8a3a28 : def.id === "pearl" ? 0x8aa090 : 0x3d6b3a,
-  };
-  return { hair, skin, suit: suits[theme], accent: def.accent };
 }
 
 export const BEST_KEY = "glimmer-maze-best";

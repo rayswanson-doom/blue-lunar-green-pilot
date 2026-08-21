@@ -12,10 +12,22 @@ export const CONFIG = {
   combat: {
     playerRadius: 0.36,
     interact: 1.9,
-    autoCharm: 1.55,
+    shrineOpen: 1.55,
   },
   audio: {
     master: 0.7,
+  },
+  fx: {
+    shadows: true,
+    bloom: { strength: 0.28, radius: 0.55, threshold: 0.78 },
+    ssao: true,
+    particles: {
+      victorian: 48,
+      cyberpunk: 260,
+      battlefield: 90,
+      hell: 220,
+      forest: 180,
+    },
   },
 } as const;
 

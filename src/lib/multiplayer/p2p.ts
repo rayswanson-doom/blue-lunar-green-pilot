@@ -52,6 +52,8 @@ export interface P2PRoomOptions {
   onMessage?: (from: string, data: unknown, channel: "state" | "reliable") => void;
   /** Fires once, on the first successful signaling poll (registration). */
   onConnected?: () => void;
+  /** Reliable data channel to this peer just opened. */
+  onChannelOpen?: (peerId: string) => void;
 }
 
 interface PeerSlot {
@@ -106,6 +108,8 @@ export class P2PRoom {
   private closed = false;
   private everPolled = false;
   private lastPeersFingerprint = "";
+  private localStream: MediaStream | null = null;
+  private readonly remoteAudio = new Map<string, HTMLAudioElement>();
 
   constructor(opts: P2PRoomOptions) {
     this.opts = opts;
@@ -144,6 +148,12 @@ export class P2PRoom {
       body: JSON.stringify({ op: "leave", room: this.opts.room, peer: this.opts.selfId }),
       keepalive: true,
     }).catch(() => {});
+    this.setLocalAudio(null);
+    for (const el of this.remoteAudio.values()) {
+      el.pause();
+      el.srcObject = null;
+    }
+    this.remoteAudio.clear();
   }
 
   /** Send on the unreliable game-state channel (drops stale packets). */
@@ -165,6 +175,28 @@ export class P2PRoom {
 
   peerList(): PeerInfo[] {
     return [...this.peers.values()].map((s) => ({ ...s.info }));
+  }
+
+  setLocalAudio(stream: MediaStream | null): void {
+    if (this.localStream) {
+      for (const slot of this.peers.values()) {
+        for (const sender of slot.pc.getSenders()) {
+          if (sender.track?.kind === "audio") slot.pc.removeTrack(sender);
+        }
+      }
+      for (const track of this.localStream.getTracks()) track.stop();
+    }
+    this.localStream = stream;
+    if (!stream) return;
+    for (const slot of this.peers.values()) {
+      for (const track of stream.getAudioTracks()) slot.pc.addTrack(track, stream);
+    }
+  }
+
+  setMicEnabled(on: boolean): void {
+    this.localStream?.getAudioTracks().forEach((t) => {
+      t.enabled = on;
+    });
   }
 
   // ── signaling loop ─────────────────────────────────────────────────────────
@@ -300,6 +332,13 @@ export class P2PRoom {
       }
     };
     pc.ondatachannel = (e) => this.attachChannel(slot, e.channel);
+    pc.ontrack = (e) => this.attachRemoteAudio(peerId, e);
+
+    if (this.localStream) {
+      for (const track of this.localStream.getAudioTracks()) {
+        pc.addTrack(track, this.localStream);
+      }
+    }
 
     if (initiator) {
       // Creating the channels triggers negotiationneeded → the offer.
@@ -317,6 +356,7 @@ export class P2PRoom {
     else slot.reliable = channel;
     channel.onopen = () => {
       slot.lastProgressAt = Date.now();
+      if (channel.label === "reliable") this.opts.onChannelOpen?.(slot.info.id);
     };
     channel.onmessage = (e) => {
       let msg: { t: string; d?: unknown };
@@ -343,6 +383,19 @@ export class P2PRoom {
         );
       }
     };
+  }
+
+  private attachRemoteAudio(peerId: string, e: RTCTrackEvent): void {
+    const stream = e.streams[0] ?? new MediaStream(e.track ? [e.track] : []);
+    let el = this.remoteAudio.get(peerId);
+    if (!el) {
+      el = new Audio();
+      el.autoplay = true;
+      el.setAttribute("playsinline", "true");
+      this.remoteAudio.set(peerId, el);
+    }
+    el.srcObject = stream;
+    void el.play().catch(() => {});
   }
 
   /** Apply buffered ICE candidates once a remote description is in place. */

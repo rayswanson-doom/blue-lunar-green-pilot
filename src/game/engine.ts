@@ -5,28 +5,29 @@ import {
   BOT_NAMES,
   MAX_HEARTS,
   makeWeapon,
-  museById,
-  musePortrait,
+  shrineById,
   sizeById,
   themeById,
   writeBest,
-  type MuseId,
+  type ShrineId,
   type SizeId,
   type ThemeId,
   type Weapon,
 } from "./content";
 import { CONFIG } from "./config";
 import { pickBotTarget, steerBot, type Hunter } from "./ai";
-import { riddleFor } from "./riddles";
 import {
   buildDiamond,
   buildExit,
   buildHunter,
   buildLantern,
-  buildPortraitMuse,
+  buildShrine,
+  buildViewHands,
   buildViewWeapon,
 } from "./figures";
-import { dressMaze } from "./props";
+import { dressMaze, buildThemeKit } from "./props";
+import { makeThemeEnv } from "./env";
+import { CSM } from "three/addons/csm/CSM.js";
 import {
   CELL,
   PLAYER_R,
@@ -48,9 +49,12 @@ import {
   type WallBox,
 } from "./maze";
 import { makeThemeTextures } from "./textures";
+import { createPostStack } from "./fx";
+import { createParticleField, type ParticleField } from "./particles";
+import { codeToEcho, makeEchoPattern, shrineIndex, type EchoStep } from "./shrine";
 
-export type Phase = "title" | "playing" | "paused" | "encounter" | "win" | "lose";
-export type PromptKind = null | "charm" | "exit" | "wall";
+export type Phase = "title" | "playing" | "paused" | "echo" | "win" | "lose";
+export type PromptKind = null | "shrine" | "exit" | "wall";
 
 export type HuntSettings = {
   sizeId: SizeId;
@@ -69,9 +73,16 @@ export type HudState = {
   explored: number;
   cellTotal: number;
   prompt: PromptKind;
-  museId: MuseId | null;
-  charmed: number;
-  museTotal: number;
+  shrineId: ShrineId | null;
+  solved: number;
+  shrineTotal: number;
+  echoPattern: EchoStep[];
+  echoInput: EchoStep[];
+  echoPlaying: boolean;
+  echoFlash: EchoStep | null;
+  echoBeat: number;
+  echoStatus: "listen" | "repeat" | "fail" | null;
+  shrineName: string;
   hint: boolean;
   seed: number;
   weaponName: string;
@@ -85,9 +96,9 @@ export type HudState = {
 
 export type GameEvent =
   | { type: "hud"; state: HudState }
-  | { type: "muse"; id: MuseId }
+  | { type: "echo"; id: ShrineId }
   | { type: "result"; ok: boolean; hearts: number; weaponName: string }
-  | { type: "win"; time: number; diamonds: number; charmed: number }
+  | { type: "win"; time: number; diamonds: number; solved: number }
   | { type: "lose" };
 
 export type NetHooks = {
@@ -103,8 +114,9 @@ export type GameHandle = {
   pause: () => void;
   resume: () => void;
   restart: (seed?: number) => void;
-  dismissMuse: () => void;
-  answer: (optionId: string) => { ok: boolean; hearts: number };
+  toMenu: () => void;
+  dismissEcho: () => void;
+  echoStep: (step: EchoStep) => { ok: boolean; done: boolean };
   setKey: (code: string, down: boolean) => void;
   setMoveAxis: (x: number, y: number) => void;
   applyLook: (dx: number, dy: number) => void;
@@ -119,12 +131,15 @@ export type GameHandle = {
 };
 
 type Gem = { mesh: THREE.Group; x: number; z: number; taken: boolean };
-type MuseEnt = {
-  id: MuseId;
+type ShrineEnt = {
+  id: ShrineId;
   mesh: THREE.Group;
   x: number;
   z: number;
-  charmed: boolean;
+  solved: boolean;
+  mutations: number;
+  pattern: EchoStep[];
+  quadrant: number;
   box: WallBox;
 };
 
@@ -162,6 +177,8 @@ export function createGame(opts: {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = CONFIG.fx.shadows;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(72, 1, 0.08, 90);
@@ -169,10 +186,36 @@ export function createGame(opts: {
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff3e4, 1.15);
   sun.position.set(10, 22, 9);
+  sun.castShadow = false;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0007;
+  sun.shadow.normalBias = 0.035;
+  sun.shadow.camera.near = 2;
+  sun.shadow.camera.far = 90;
+  sun.shadow.camera.left = -16;
+  sun.shadow.camera.right = 16;
+  sun.shadow.camera.top = 16;
+  sun.shadow.camera.bottom = -16;
   scene.add(sun);
+  scene.add(sun.target);
   const fill = new THREE.DirectionalLight(0x9ec5c1, 0.32);
   fill.position.set(-9, 8, -12);
   scene.add(fill);
+
+  const csm = new CSM({
+    camera,
+    parent: scene,
+    cascades: 2,
+    maxFar: 40,
+    mode: "practical",
+    shadowMapSize: 1024,
+    lightDirection: new THREE.Vector3(-0.52, -1, -0.38).normalize(),
+    lightIntensity: 1.05,
+    lightNear: 0.5,
+    lightFar: 64,
+    lightMargin: 8,
+    shadowBias: -0.00025,
+  });
 
   const world = new THREE.Group();
   scene.add(world);
@@ -185,7 +228,7 @@ export function createGame(opts: {
   const ghostMat = new THREE.MeshBasicMaterial({
     color: 0x7fdad2,
     transparent: true,
-    opacity: 0.42,
+    opacity: 0.14,
     depthWrite: false,
   });
   const ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), ghostMat);
@@ -195,6 +238,9 @@ export function createGame(opts: {
   const viewRoot = new THREE.Group();
   camera.add(viewRoot);
   scene.add(camera);
+  viewRoot.add(buildViewHands());
+
+  const post = createPostStack(renderer, scene, camera);
 
   const keys = new Set<string>();
   const qaKeys = new Set<string>();
@@ -211,12 +257,20 @@ export function createGame(opts: {
   let lastThud = -1;
   let prompt: PromptKind = null;
   let wallMode: "add" | "remove" | null = null;
-  let museId: MuseId | null = null;
+  let shrineId: ShrineId | null = null;
   let showHint = false;
-  let awayMuse: MuseId | null = null;
+  let awayShrine: ShrineId | null = null;
+  let echoPattern: EchoStep[] = [];
+  let echoInput: EchoStep[] = [];
+  let echoPlaying = false;
+  let echoFlash: EchoStep | null = null;
+  let echoStatus: "listen" | "repeat" | "fail" | null = null;
+  let echoAcc = 0;
+  let echoLastI = -1;
   let camShake = 0;
   let recoil = 0;
   let swing = 0;
+  let hitFlash = 0;
   let disposed = false;
   let acc = 0;
   let last = performance.now();
@@ -224,7 +278,7 @@ export function createGame(opts: {
   let maze!: MazeData;
   let hash!: ReturnType<typeof makeWallHash>;
   let gems: Gem[] = [];
-  let muses: MuseEnt[] = [];
+  let shrines: ShrineEnt[] = [];
   let hunters: Hunter[] = [];
   let hunterMesh = new Map<string, THREE.Group>();
   let exitPos = { x: 0, z: 0 };
@@ -234,12 +288,20 @@ export function createGame(opts: {
   let netAcc = 0;
   let wallMesh: THREE.InstancedMesh | null = null;
   let capMesh: THREE.InstancedMesh | null = null;
+  let trimMesh: THREE.InstancedMesh | null = null;
   let viewWeapon: THREE.Group | null = null;
   let skyMesh: THREE.Mesh | null = null;
+  let particles: ParticleField | null = null;
+  let envMap: THREE.Texture | null = null;
+  let trimKit: THREE.Group | null = null;
+  let puddle: THREE.Mesh | null = null;
+  let cubeCam: THREE.CubeCamera | null = null;
+  const lampGlows: THREE.Mesh[] = [];
+  let puddleTick = 0;
   const explored = new Set<number>();
   const tmpColor = new THREE.Color();
   const dummy = new THREE.Object3D();
-  const lanternLights: THREE.PointLight[] = [];
+  const lanternLights: THREE.Light[] = [];
   let tex: ReturnType<typeof makeThemeTextures> | null = null;
   let themeMats: THREE.Material[] = [];
 
@@ -259,9 +321,16 @@ export function createGame(opts: {
       explored: explored.size,
       cellTotal: maze ? maze.cols * maze.rows : 1,
       prompt,
-      museId,
-      charmed: muses.filter((m) => m.charmed).length,
-      museTotal: muses.length,
+      shrineId,
+      solved: shrines.filter((s) => s.solved).length,
+      shrineTotal: shrines.length,
+      echoPattern,
+      echoInput,
+      echoPlaying,
+      echoFlash,
+      echoBeat: echoStatus === "listen" ? echoLastI : echoStatus === "repeat" ? echoInput.length : -1,
+      echoStatus,
+      shrineName: shrineId ? shrineById(shrineId)?.name ?? "" : "",
       hint: showHint,
       seed: maze?.seed ?? 0,
       weaponName: me?.weapon?.name ?? "Unarmed",
@@ -285,6 +354,8 @@ export function createGame(opts: {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    post.setSize(w, h);
+    csm.updateFrustums();
   }
 
   function disposeObject(root: THREE.Object3D) {
@@ -303,20 +374,46 @@ export function createGame(opts: {
     scene.fog = new THREE.Fog(theme.fog, theme.fogNear, theme.fogFar);
     hemi.color.set(theme.hemiSky);
     hemi.groundColor.set(theme.hemiGround);
+    const dark = theme.id === "cyberpunk" || theme.id === "forest" || theme.id === "battlefield";
+    hemi.intensity = dark ? 1.45 : 1.15;
     sun.color.set(theme.sun);
     sun.intensity = theme.sunInt;
     fill.color.set(theme.fill);
-    renderer.toneMappingExposure =
-      theme.id === "hell" ? 1.32 : theme.id === "cyberpunk" ? 1.08 : 1.1;
+    fill.intensity = dark ? 0.72 : 0.4;
+    renderer.toneMappingExposure = theme.id === "hell" ? 1.32 : dark ? 1.28 : 1.12;
     playerLight.color.set(theme.lantern);
-    playerLight.intensity = theme.id === "hell" ? 2.4 : 1.7;
-    playerLight.distance = theme.id === "hell" ? 14 : 10;
+    playerLight.intensity = dark ? 2.8 : theme.id === "hell" ? 2.4 : 1.8;
+    playerLight.distance = dark ? 16 : 12;
+    playerLight.decay = 1.1;
     exitLight.color.set(theme.accent);
+    sun.intensity = theme.sunInt * 0.28;
+    for (const l of csm.lights) {
+      l.color.set(theme.sun);
+      l.intensity = theme.sunInt * 0.85;
+    }
+    csm.lightDirection.set(-0.52, -1, -0.38).normalize();
+    post.setBloom(
+      theme.id === "cyberpunk" ? 0.48 : theme.id === "hell" ? 0.42 : 0.24,
+    );
+  }
+
+  function bindCsm(root: THREE.Object3D) {
+    root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const mat of mats) {
+        if (!(mat instanceof THREE.MeshStandardMaterial)) continue;
+        if (mat.defines && "USE_CSM" in mat.defines) continue;
+        csm.setupMaterial(mat);
+      }
+    });
   }
 
   function clearWorld() {
     for (const l of lanternLights) {
       scene.remove(l);
+      if (l instanceof THREE.SpotLight) scene.remove(l.target);
       l.dispose();
     }
     lanternLights.length = 0;
@@ -332,18 +429,45 @@ export function createGame(opts: {
       disposeObject(skyMesh);
       skyMesh = null;
     }
+    if (particles) {
+      world.remove(particles.mesh);
+      particles.dispose();
+      particles = null;
+    }
+    if (trimKit) {
+      world.remove(trimKit);
+      disposeObject(trimKit);
+      trimKit = null;
+    }
+    if (cubeCam) {
+      cubeCam.renderTarget.dispose();
+      scene.remove(cubeCam);
+      cubeCam = null;
+    }
+    puddle = null;
+    lampGlows.length = 0;
+    if (envMap) {
+      envMap.dispose();
+      envMap = null;
+      scene.environment = null;
+    }
     for (const m of themeMats) m.dispose();
     themeMats = [];
     if (tex) {
       tex.wallTex.dispose();
       tex.floorTex.dispose();
       tex.capTex.dispose();
+      tex.wallNormal.dispose();
+      tex.floorNormal.dispose();
+      tex.wallRough.dispose();
+      tex.floorRough.dispose();
     }
     tex = null;
     wallMesh = null;
     capMesh = null;
+    trimMesh = null;
     gems = [];
-    muses = [];
+    shrines = [];
     hunters = [];
   }
 
@@ -356,15 +480,27 @@ export function createGame(opts: {
       world.remove(capMesh);
       capMesh.geometry.dispose();
     }
+    if (trimMesh) {
+      world.remove(trimMesh);
+      trimMesh.geometry.dispose();
+    }
     const wallGeo = new THREE.BoxGeometry(1, 1, 1);
     const wallMat = new THREE.MeshStandardMaterial({
       map: tex?.wallTex,
-      roughness: 0.82,
-      metalness: theme.id === "cyberpunk" ? 0.35 : 0.06,
+      normalMap: tex?.wallNormal,
+      roughnessMap: tex?.wallRough,
+      roughness: theme.id === "cyberpunk" ? 0.5 : 0.82,
+      metalness: theme.id === "cyberpunk" ? 0.22 : 0.06,
       color: 0xffffff,
+      emissive: theme.id === "cyberpunk" ? 0x143038 : 0x000000,
+      emissiveIntensity: theme.id === "cyberpunk" ? 0.22 : 0,
+      envMapIntensity: 0.85,
     });
+    if (wallMat.normalScale) wallMat.normalScale.set(0.85, 0.85);
     themeMats.push(wallMat);
     wallMesh = new THREE.InstancedMesh(wallGeo, wallMat, maze.walls.length);
+    wallMesh.castShadow = true;
+    wallMesh.receiveShadow = true;
     maze.walls.forEach((w, i) => {
       dummy.position.set(w.cx, WALL_H / 2, w.cz);
       dummy.scale.set(w.sx, WALL_H, w.sz);
@@ -378,14 +514,17 @@ export function createGame(opts: {
     world.add(wallMesh);
 
     const capGeo = new THREE.BoxGeometry(1, 1, 1);
-    const capMat = new THREE.MeshStandardMaterial({
+    const capMat = new THREE.MeshPhysicalMaterial({
       map: tex?.capTex,
       color: theme.cap,
-      roughness: 0.7,
-      metalness: 0.12,
+      roughness: 0.45,
+      metalness: theme.id === "cyberpunk" ? 0.45 : 0.18,
+      clearcoat: 0.28,
+      clearcoatRoughness: 0.35,
     });
     themeMats.push(capMat);
     capMesh = new THREE.InstancedMesh(capGeo, capMat, maze.walls.length);
+    capMesh.castShadow = true;
     maze.walls.forEach((w, i) => {
       dummy.position.set(w.cx, WALL_H + 0.06, w.cz);
       dummy.scale.set(w.sx + 0.08, 0.12, w.sz + 0.08);
@@ -394,6 +533,35 @@ export function createGame(opts: {
     });
     capMesh.instanceMatrix.needsUpdate = true;
     world.add(capMesh);
+
+    const trimGeo = new THREE.BoxGeometry(1, 1, 1);
+    const trimMat = new THREE.MeshPhysicalMaterial({
+      color: theme.cap,
+      roughness: 0.4,
+      metalness: 0.22,
+      clearcoat: 0.2,
+    });
+    themeMats.push(trimMat);
+    trimMesh = new THREE.InstancedMesh(trimGeo, trimMat, maze.walls.length);
+    trimMesh.castShadow = true;
+    maze.walls.forEach((w, i) => {
+      dummy.position.set(w.cx, 0.1, w.cz);
+      dummy.scale.set(w.sx + 0.1, 0.2, w.sz + 0.1);
+      dummy.updateMatrix();
+      trimMesh!.setMatrixAt(i, dummy.matrix);
+    });
+    trimMesh.instanceMatrix.needsUpdate = true;
+    world.add(trimMesh);
+    if (trimKit) {
+      world.remove(trimKit);
+      disposeObject(trimKit);
+    }
+    trimKit = buildThemeKit(maze, theme);
+    world.add(trimKit);
+    bindCsm(wallMesh);
+    bindCsm(capMesh);
+    bindCsm(trimMesh);
+    bindCsm(trimKit);
     hash = makeWallHash(maze.walls);
   }
 
@@ -409,8 +577,16 @@ export function createGame(opts: {
   function spawnHunter(h: Hunter) {
     const mesh = buildHunter(h.color);
     mesh.visible = h.kind !== "local";
+    mesh.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh) {
+        m.castShadow = true;
+        m.receiveShadow = true;
+      }
+    });
     scene.add(mesh);
     hunterMesh.set(h.id, mesh);
+    bindCsm(mesh);
   }
 
   function buildWorld(seed: number) {
@@ -418,14 +594,32 @@ export function createGame(opts: {
     theme = themeById(settings.themeId);
     size = sizeById(settings.sizeId);
     applyThemeLights();
+    envMap = makeThemeEnv(theme, renderer);
+    scene.environment = envMap;
+    scene.environmentIntensity = theme.id === "cyberpunk" ? 1.05 : 0.72;
     tex = makeThemeTextures(theme);
     maze = generateMaze(seed, size);
     hash = makeWallHash(maze.walls);
+    const mx = (maze.cols * CELL) / 2;
+    const mz = (maze.rows * CELL) / 2;
+    const span = Math.max(maze.cols, maze.rows) * CELL * 0.55;
+    sun.position.set(mx + 14, 26, mz + 10);
+    sun.target.position.set(mx, 0, mz);
+    sun.shadow.camera.left = -span;
+    sun.shadow.camera.right = span;
+    sun.shadow.camera.top = span;
+    sun.shadow.camera.bottom = -span;
+    sun.shadow.camera.updateProjectionMatrix();
     portalOpen = false;
     prompt = null;
-    museId = null;
+    shrineId = null;
     showHint = false;
-    awayMuse = null;
+    awayShrine = null;
+    echoPattern = [];
+    echoInput = [];
+    echoPlaying = false;
+    echoFlash = null;
+    echoStatus = null;
     explored.clear();
     time = 0;
     yaw = maze.startYaw;
@@ -451,14 +645,21 @@ export function createGame(opts: {
     );
     ground.rotation.x = -Math.PI / 2;
     ground.position.set((maze.cols * CELL) / 2, -0.02, (maze.rows * CELL) / 2);
+    ground.receiveShadow = true;
     world.add(ground);
 
     const floorGeo = new THREE.BoxGeometry(1, 1, 1);
     const floorMat = new THREE.MeshStandardMaterial({
       map: tex.floorTex,
-      roughness: 0.88,
-      metalness: 0.04,
+      normalMap: tex.floorNormal,
+      roughnessMap: tex.floorRough,
+      roughness: theme.id === "cyberpunk" ? 0.22 : 0.82,
+      metalness: theme.id === "cyberpunk" ? 0.55 : 0.04,
+      envMapIntensity: theme.id === "cyberpunk" ? 1.25 : 0.45,
+      emissive: theme.id === "cyberpunk" ? theme.accent : 0x000000,
+      emissiveIntensity: theme.id === "cyberpunk" ? 0.08 : 0,
     });
+    if (floorMat.normalScale) floorMat.normalScale.set(0.7, 0.7);
     themeMats.push(floorMat);
     const floors = new THREE.InstancedMesh(floorGeo, floorMat, maze.cols * maze.rows);
     let fi = 0;
@@ -475,7 +676,36 @@ export function createGame(opts: {
     }
     floors.instanceMatrix.needsUpdate = true;
     floors.instanceColor!.needsUpdate = true;
+    floors.receiveShadow = true;
     world.add(floors);
+    bindCsm(floors);
+    bindCsm(ground);
+
+    if (theme.id === "cyberpunk") {
+      const cubeTarget = new THREE.WebGLCubeRenderTarget(96);
+      cubeCam = new THREE.CubeCamera(0.2, 32, cubeTarget);
+      scene.add(cubeCam);
+      const puddleMat = new THREE.MeshPhysicalMaterial({
+        color: 0x1c303c,
+        metalness: 0.9,
+        roughness: 0.14,
+        envMap: cubeTarget.texture,
+        envMapIntensity: 1.4,
+        transparent: true,
+        opacity: 0.38,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      });
+      themeMats.push(puddleMat);
+      puddle = new THREE.Mesh(
+        new THREE.PlaneGeometry(maze.cols * CELL, maze.rows * CELL),
+        puddleMat,
+      );
+      puddle.rotation.x = -Math.PI / 2;
+      puddle.position.set((maze.cols * CELL) / 2, 0.045, (maze.rows * CELL) / 2);
+      puddle.name = "puddle";
+      world.add(puddle);
+    }
 
     rebuildWallMeshes();
 
@@ -487,19 +717,23 @@ export function createGame(opts: {
       gems.push({ mesh, x, z, taken: false });
     }
 
-    for (const m of maze.muses) {
-      const def = museById(m.id)!;
+    for (const m of maze.shrines) {
+      const def = shrineById(m.id)!;
       const { x, z } = cellCenter(m.c, m.r);
-      const placeholder = buildPortraitMuse(null, def.accent, def.id);
-      placeholder.position.set(x, 0, z);
-      world.add(placeholder);
-      const rad = 0.55;
-      const ent = {
+      const mesh = buildShrine(def, theme.id);
+      mesh.position.set(x, 0, z);
+      world.add(mesh);
+      const rad = 0.7;
+      const qi = shrineIndex(m.id);
+      shrines.push({
         id: m.id,
-        mesh: placeholder,
+        mesh,
         x,
         z,
-        charmed: false,
+        solved: false,
+        mutations: 0,
+        pattern: makeEchoPattern(maze.seed, qi, 0),
+        quadrant: qi,
         box: {
           minX: x - rad,
           maxX: x + rad,
@@ -510,17 +744,6 @@ export function createGame(opts: {
           sx: rad * 2,
           sz: rad * 2,
         },
-      };
-      muses.push(ent);
-      loader.load(musePortrait(def.id, theme.id), (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 4;
-        const card = buildPortraitMuse(tex, def.accent, def.id);
-        card.position.set(x, 0, z);
-        world.remove(placeholder);
-        disposeObject(placeholder);
-        world.add(card);
-        ent.mesh = card;
       });
     }
 
@@ -538,17 +761,38 @@ export function createGame(opts: {
       const lamp = buildLantern(theme.lantern);
       lamp.position.set(p.x + 0.9, 0, p.z + 0.9);
       world.add(lamp);
-      if (i < 8) {
-        const light = new THREE.PointLight(theme.lantern, theme.id === "hell" ? 2.1 : 1.15, 8, 1.5);
+      const glow = lamp.getObjectByName("lampGlow") as THREE.Mesh | undefined;
+      if (glow) lampGlows.push(glow);
+      if (i < (theme.id === "cyberpunk" || theme.id === "forest" || theme.id === "battlefield" ? 14 : 8)) {
+        const light = new THREE.PointLight(
+          theme.lantern,
+          theme.id === "hell" ? 2.1 : 1.85,
+          11,
+          1.25,
+        );
         light.position.set(p.x + 0.9, 2.15, p.z + 0.9);
         scene.add(light);
         lanternLights.push(light);
+      }
+      if (i < 3) {
+        const spot = new THREE.SpotLight(theme.lantern, 1.6, 14, 0.7, 0.45, 1.2);
+        spot.position.set(p.x + 0.9, 2.2, p.z + 0.9);
+        spot.target.position.set(p.x + 0.9, 0, p.z + 0.9);
+        spot.castShadow = true;
+        spot.shadow.mapSize.set(256, 256);
+        spot.shadow.bias = -0.001;
+        scene.add(spot);
+        scene.add(spot.target);
+        lanternLights.push(spot);
       }
     });
     dressMaze(world, maze, theme, lanternLights);
     for (const l of lanternLights) {
       if (!l.parent) scene.add(l);
     }
+    particles = createParticleField(theme, maze.cols, maze.rows);
+    if (particles) world.add(particles.mesh);
+    bindCsm(world);
 
     const start = cellCenter(maze.start.c, maze.start.r);
     explored.add(maze.start.r * maze.cols + maze.start.c);
@@ -609,7 +853,7 @@ export function createGame(opts: {
   }
 
   function extraBoxes(): WallBox[] {
-    return muses.filter((m) => !m.charmed).map((m) => m.box);
+    return shrines.filter((s) => !s.solved).map((s) => s.box);
   }
 
   function markExplored(h: Hunter) {
@@ -626,8 +870,8 @@ export function createGame(opts: {
 
   function refreshPortal() {
     const allGems = gems.every((g) => g.taken);
-    const allMuses = muses.every((m) => m.charmed);
-    const open = allGems && allMuses && muses.length > 0;
+    const allShrines = shrines.every((s) => s.solved);
+    const open = allGems && allShrines && shrines.length > 0;
     if (open === portalOpen) return;
     portalOpen = open;
     const exit = world.getObjectByName("exit");
@@ -699,6 +943,7 @@ export function createGame(opts: {
     h.hp = Math.max(0, h.hp - amt);
     if (h.kind === "local") {
       camShake = 0.22;
+      hitFlash = 1;
       audio.hit();
     }
     if (h.hp <= 0) {
@@ -782,14 +1027,65 @@ export function createGame(opts: {
     }
   }
 
-  function tryCharmBot(h: Hunter) {
-    for (const m of muses) {
-      if (m.charmed) continue;
-      if (Math.hypot(m.x - h.x, m.z - h.z) > 1.3) continue;
-      m.charmed = true;
-      const def = museById(m.id)!;
-      h.weapon = makeWeapon(def.reward, h.diamonds, theme.id, def.id);
-      refreshPortal();
+  function revealQuadrant(index: number) {
+    const midC = Math.ceil(maze.cols / 2);
+    const midR = Math.ceil(maze.rows / 2);
+    const c0 = index % 2 === 0 ? 0 : midC;
+    const c1 = index % 2 === 0 ? midC : maze.cols;
+    const r0 = index < 2 ? 0 : midR;
+    const r1 = index < 2 ? midR : maze.rows;
+    for (let r = r0; r < r1; r++) {
+      for (let c = c0; c < c1; c++) explored.add(r * maze.cols + c);
+    }
+  }
+
+  function mutateNearbyWall(s: ShrineEnt) {
+    const cell = worldToCell(s.x, s.z, maze.cols, maze.rows);
+    const dirs: Array<0 | 1 | 2 | 3> = [0, 1, 2, 3];
+    for (let i = dirs.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const t = dirs[i]!;
+      dirs[i] = dirs[j]!;
+      dirs[j] = t;
+    }
+    for (const dir of dirs) {
+      if (!canToggleEdge(maze, cell.c, cell.r, dir)) continue;
+      if (toggleEdge(maze, cell.c, cell.r, dir)) {
+        rebuildWallMeshes();
+        audio.wall();
+        return;
+      }
+    }
+  }
+
+  function flashPad(mesh: THREE.Group, step: EchoStep | null) {
+    for (const id of ["w", "a", "s", "d", "f"] as EchoStep[]) {
+      const pad = mesh.getObjectByName(`pad-${id}`) as THREE.Mesh | undefined;
+      if (!pad || !pad.material) continue;
+      const mat = pad.material as THREE.MeshStandardMaterial;
+      mat.emissiveIntensity = step === id ? 2.4 : 0.35;
+    }
+  }
+
+  function completeShrine(s: ShrineEnt, h: Hunter, localSolve: boolean) {
+    if (s.solved) return;
+    s.solved = true;
+    const def = shrineById(s.id)!;
+    h.weapon = makeWeapon(def.reward, h.diamonds, theme.id, def.id);
+    if (localSolve) {
+      setViewWeapon(h.weapon);
+      revealQuadrant(s.quadrant);
+      audio.success();
+    }
+    refreshPortal();
+    pushHud();
+  }
+
+  function trySolveShrine(h: Hunter) {
+    for (const s of shrines) {
+      if (s.solved) continue;
+      if (Math.hypot(s.x - h.x, s.z - h.z) > 1.3) continue;
+      completeShrine(s, h, false);
     }
   }
 
@@ -857,7 +1153,7 @@ export function createGame(opts: {
           maze,
           me,
           gems,
-          muses,
+          shrines,
           portalOpen,
           exitPos,
         );
@@ -875,7 +1171,7 @@ export function createGame(opts: {
         h.x = res.x;
         h.z = res.z;
         tryPickup(h);
-        tryCharmBot(h);
+        trySolveShrine(h);
         maybeBotWall(h);
         if (h.weapon && tgt.mode === "hunt") {
           const los = lineOpen(maze, h.x, h.z, me.x, me.z);
@@ -907,26 +1203,26 @@ export function createGame(opts: {
           const e = edgeWorld(cell.c, cell.r, dir);
           ghost.visible = true;
           ghost.position.set(e.cx, WALL_H / 2, e.cz);
-          ghost.scale.set(e.sx * 1.08, WALL_H * 1.04, e.sz * 1.08);
+          ghost.scale.set(e.sx * 1.04, WALL_H * 1.02, e.sz * 1.04);
           ghostMat.color.set(open ? theme.accent : 0xd4735a);
-          ghostMat.opacity = 0.32 + Math.sin(time * 6) * 0.08;
+          ghostMat.opacity = 0.11 + Math.sin(time * 3.2) * 0.03;
         }
       }
-      let nearest: MuseEnt | null = null;
+      let nearest: ShrineEnt | null = null;
       let nearestD = 2.1;
-      for (const m of muses) {
-        if (m.charmed) continue;
+      for (const m of shrines) {
+        if (m.solved) continue;
         const d = Math.hypot(m.x - me.x, m.z - me.z);
         if (d < nearestD) {
           nearestD = d;
           nearest = m;
         }
       }
-      if (nearest && nearestD < 1.9) {
-        prompt = "charm";
-        if (awayMuse !== nearest.id && nearestD < 1.55) openMuse(nearest.id);
+      if (nearest && nearestD < CONFIG.combat.interact) {
+        prompt = "shrine";
+        if (awayShrine !== nearest.id && nearestD < CONFIG.combat.shrineOpen) openEcho(nearest.id);
       } else {
-        awayMuse = null;
+        awayShrine = null;
       }
     }
 
@@ -935,15 +1231,74 @@ export function createGame(opts: {
     recoil = Math.max(0, recoil - dt * 2.4);
   }
 
-  function openMuse(id: MuseId) {
+  function openEcho(id: ShrineId) {
     if (phase !== "playing") return;
-    phase = "encounter";
-    museId = id;
-    showHint = false;
-    prompt = "charm";
+    const ent = shrines.find((s) => s.id === id && !s.solved);
+    if (!ent) return;
+    phase = "echo";
+    shrineId = id;
+    echoPattern = ent.pattern;
+    echoInput = [];
+    echoPlaying = true;
+    echoFlash = null;
+    echoStatus = "listen";
+    echoAcc = 0;
+    echoLastI = -1;
+    prompt = "shrine";
     document.exitPointerLock?.();
-    emit({ type: "muse", id });
+    emit({ type: "echo", id });
     pushHud();
+  }
+
+  function tickEcho(dt: number) {
+    if (phase !== "echo" || !shrineId) return;
+    const ent = shrines.find((s) => s.id === shrineId);
+    if (!ent) return;
+    if (echoStatus === "listen") {
+      echoAcc += dt;
+      const lead = 0.28;
+      const gap = 0.52;
+      const hold = 0.34;
+      if (echoAcc < lead) {
+        flashPad(ent.mesh, null);
+        return;
+      }
+      const i = Math.floor((echoAcc - lead) / gap);
+      const sub = echoAcc - lead - i * gap;
+      if (i >= 0 && i < echoPattern.length) {
+        if (sub < hold) {
+          if (i !== echoLastI) {
+            echoLastI = i;
+            echoFlash = echoPattern[i] ?? null;
+            if (echoFlash) audio.echo(echoFlash, theme.id);
+            pushHud();
+          }
+          flashPad(ent.mesh, echoFlash);
+        } else if (echoFlash) {
+          echoFlash = null;
+          flashPad(ent.mesh, null);
+          pushHud();
+        }
+        return;
+      }
+      const tail = lead + echoPattern.length * gap + 0.22;
+      if (echoAcc < tail) {
+        if (echoFlash) {
+          echoFlash = null;
+          flashPad(ent.mesh, null);
+          pushHud();
+        }
+        return;
+      }
+      echoPlaying = false;
+      echoFlash = null;
+      echoStatus = "repeat";
+      echoInput = [];
+      flashPad(ent.mesh, null);
+      pushHud();
+    } else {
+      flashPad(ent.mesh, echoFlash);
+    }
   }
 
   function win() {
@@ -956,7 +1311,7 @@ export function createGame(opts: {
       type: "win",
       time,
       diamonds: local().diamonds,
-      charmed: muses.filter((m) => m.charmed).length,
+      solved: shrines.filter((s) => s.solved).length,
     });
     pushHud();
   }
@@ -986,7 +1341,11 @@ export function createGame(opts: {
     }
     camera.position.set(me.x + ox, EYE + oy, me.z + oz);
     camera.lookAt(me.x + fx, EYE + lookY, me.z + fz);
-    viewRoot.position.set(0.02, -0.02 - recoil, -recoil);
+    const idleX = Math.sin(bob * 1.15) * 0.012;
+    const idleY = Math.cos(bob * 2.3) * 0.01;
+    viewRoot.position.set(0.02 + idleX, -0.02 - recoil + idleY, -recoil);
+    viewRoot.rotation.z = idleX * 1.35;
+    viewRoot.rotation.x = idleY * 0.8;
     playerLight.position.set(me.x, 1.45, me.z);
     muzzleLight.position.copy(camera.position);
   }
@@ -998,16 +1357,18 @@ export function createGame(opts: {
       s.mesh.rotation.y += dt * 1.8;
       s.mesh.position.y = 0.82 + Math.sin(t * 2.4 + s.x) * 0.12;
     }
-    for (const m of muses) {
-      if (m.charmed) {
-        m.mesh.scale.multiplyScalar(Math.max(0, 1 - dt * 3.2));
+    for (const m of shrines) {
+      if (m.solved) {
+        m.mesh.scale.multiplyScalar(Math.max(0, 1 - dt * 2.4));
         if (m.mesh.scale.x < 0.05) m.mesh.visible = false;
         continue;
       }
-      const me = local();
-      m.mesh.rotation.y = Math.atan2(me.x - m.x, me.z - m.z);
       const glow = m.mesh.getObjectByName("glow");
       if (glow) glow.rotation.z = t;
+      const core = m.mesh.getObjectByName("core") as THREE.Mesh | undefined;
+      if (core && core.material && "emissiveIntensity" in core.material) {
+        (core.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.7 + Math.sin(t * 3 + m.x) * 0.35;
+      }
     }
     for (const h of hunters) {
       const mesh = hunterMesh.get(h.id);
@@ -1023,7 +1384,20 @@ export function createGame(opts: {
       if (veil && veil.material && "opacity" in veil.material) {
         (veil.material as THREE.MeshBasicMaterial).opacity = 0.28 + Math.sin(t * 2.2) * 0.1;
       }
-      if (core) core.scale.setScalar(1 + Math.sin(t * 3) * 0.12);
+      if (core) {
+        core.scale.setScalar(1 + Math.sin(t * 3) * 0.12);
+        const cm = (core as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        if (cm && "emissiveIntensity" in cm) cm.emissiveIntensity = 1.15 + Math.sin(t * 4.2) * 0.55;
+      }
+    }
+    for (const lamp of lampGlows) {
+      const mat = lamp.material as THREE.MeshStandardMaterial;
+      if (mat && "emissiveIntensity" in mat) {
+        mat.emissiveIntensity = 1.25 + Math.sin(t * 3.4 + lamp.position.x) * 0.55;
+      }
+    }
+    if (exitLight.intensity > 0) {
+      exitLight.intensity = 2.0 + Math.sin(t * 3.1) * 0.55;
     }
     const muzzle = viewWeapon?.getObjectByName("muzzle") as THREE.Mesh | undefined;
     if (muzzle && muzzle.material && "opacity" in muzzle.material) {
@@ -1044,6 +1418,12 @@ export function createGame(opts: {
       }
     }
     swing = Math.max(0, swing - dt * 3.4);
+    if (particles && hunters[0]) {
+      const me = local();
+      particles.update(dt, me.x, me.z);
+    }
+    hitFlash = Math.max(0, hitFlash - dt * 2.6);
+    post.setHit(hitFlash);
   }
 
   function drawMinimap() {
@@ -1051,9 +1431,9 @@ export function createGame(opts: {
     const h = mini.height;
     const ctx = miniCtx;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "rgba(12,12,14,0.78)";
+    ctx.fillStyle = "rgba(16,18,20,0.9)";
     ctx.beginPath();
-    const rr = 18;
+    const rr = 20;
     ctx.moveTo(rr, 0);
     ctx.arcTo(w, 0, w, h, rr);
     ctx.arcTo(w, h, 0, h, rr);
@@ -1062,63 +1442,129 @@ export function createGame(opts: {
     ctx.closePath();
     ctx.fill();
     if (!maze) return;
-    const pad = 10;
+    const pad = 12;
     const inner = Math.min(w, h) - pad * 2;
     const sx = inner / (maze.cols * CELL);
     const sz = inner / (maze.rows * CELL);
     const mapX = (x: number) => pad + x * sx;
     const mapZ = (z: number) => pad + z * sz;
     const me = local();
+    const cellW = CELL * sx;
+    const cellH = CELL * sz;
+
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    for (let r0 = 0; r0 < maze.rows; r0++) {
+      for (let c0 = 0; c0 < maze.cols; c0++) {
+        ctx.fillRect(mapX(c0 * CELL), mapZ(r0 * CELL), cellW - 0.4, cellH - 0.4);
+      }
+    }
+
+    const floorA =
+      theme.id === "cyberpunk"
+        ? "#4d7388"
+        : theme.id === "forest"
+          ? "#6f9158"
+          : theme.id === "battlefield"
+            ? "#9a8064"
+            : "#c4b49a";
+    const floorB =
+      theme.id === "cyberpunk"
+        ? "#3e6274"
+        : theme.id === "forest"
+          ? "#61824c"
+          : theme.id === "battlefield"
+            ? "#8a7258"
+            : "#b6a68c";
     for (let r0 = 0; r0 < maze.rows; r0++) {
       for (let c0 = 0; c0 < maze.cols; c0++) {
         if (!explored.has(r0 * maze.cols + c0)) continue;
-        ctx.fillStyle = (c0 + r0) % 2 === 0 ? "#8a8074" : "#6f675c";
-        ctx.fillRect(mapX(c0 * CELL), mapZ(r0 * CELL), CELL * sx + 0.5, CELL * sz + 0.5);
+        ctx.fillStyle = (c0 + r0) % 2 === 0 ? floorA : floorB;
+        ctx.fillRect(mapX(c0 * CELL), mapZ(r0 * CELL), cellW + 0.4, cellH + 0.4);
       }
     }
-    ctx.fillStyle = "#3a332c";
+
+    ctx.strokeStyle = "#1a1612";
+    ctx.lineWidth = Math.max(2.2, cellW * 0.18);
+    ctx.lineCap = "square";
+    ctx.beginPath();
     for (const wall of maze.walls) {
       const c0 = worldToCell(wall.cx, wall.cz, maze.cols, maze.rows);
-      if (!explored.has(c0.r * maze.cols + c0.c)) continue;
-      ctx.fillRect(mapX(wall.minX), mapZ(wall.minZ), Math.max(1.2, wall.sx * sx), Math.max(1.2, wall.sz * sz));
+      const near =
+        explored.has(c0.r * maze.cols + c0.c) ||
+        explored.has(c0.r * maze.cols + Math.max(0, c0.c - 1)) ||
+        explored.has(Math.max(0, c0.r - 1) * maze.cols + c0.c);
+      if (!near) continue;
+      ctx.moveTo(mapX(wall.minX), mapZ(wall.minZ));
+      ctx.lineTo(mapX(wall.minX + wall.sx), mapZ(wall.minZ + wall.sz));
     }
+    ctx.stroke();
+
     for (const s of gems) {
       if (s.taken) continue;
       const c = worldToCell(s.x, s.z, maze.cols, maze.rows);
       if (!explored.has(c.r * maze.cols + c.c)) continue;
-      ctx.fillStyle = "#7ecfff";
+      const gx = mapX(s.x);
+      const gz = mapZ(s.z);
+      ctx.fillStyle = "rgba(126,207,255,0.35)";
       ctx.beginPath();
-      ctx.arc(mapX(s.x), mapZ(s.z), 2.4, 0, Math.PI * 2);
+      ctx.arc(gx, gz, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#b8f0ff";
+      ctx.beginPath();
+      ctx.arc(gx, gz, 2.8, 0, Math.PI * 2);
       ctx.fill();
     }
-    for (const m of muses) {
-      if (m.charmed) continue;
+    for (const m of shrines) {
+      if (m.solved) continue;
       const c = worldToCell(m.x, m.z, maze.cols, maze.rows);
       if (!explored.has(c.r * maze.cols + c.c)) continue;
-      ctx.fillStyle = "#d4735a";
+      ctx.fillStyle = "#7fdad2";
       ctx.beginPath();
-      ctx.arc(mapX(m.x), mapZ(m.z), 3, 0, Math.PI * 2);
+      ctx.arc(mapX(m.x), mapZ(m.z), 3.6, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = "#f4efe6";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
     }
     if (portalOpen) {
       ctx.fillStyle = "#7fdad2";
-      ctx.fillRect(mapX(exitPos.x) - 3.5, mapZ(exitPos.z) - 3.5, 7, 7);
+      ctx.strokeStyle = "#f4efe6";
+      ctx.lineWidth = 1.4;
+      const ex = mapX(exitPos.x);
+      const ez = mapZ(exitPos.z);
+      ctx.fillRect(ex - 4, ez - 4, 8, 8);
+      ctx.strokeRect(ex - 4, ez - 4, 8, 8);
     }
-    for (const h of hunters) {
-      if (h.kind === "local" || h.dead) continue;
+    for (const hunter of hunters) {
+      if (hunter.kind === "local" || hunter.dead) continue;
       ctx.fillStyle = "#c45c4a";
       ctx.beginPath();
-      ctx.arc(mapX(h.x), mapZ(h.z), 2.6, 0, Math.PI * 2);
+      ctx.arc(mapX(hunter.x), mapZ(hunter.z), 3, 0, Math.PI * 2);
       ctx.fill();
     }
+
     ctx.save();
     ctx.translate(mapX(me.x), mapZ(me.z));
-    ctx.rotate(yaw);
-    ctx.fillStyle = "#f4efe6";
+    ctx.rotate(-yaw);
+    ctx.fillStyle = "rgba(90, 210, 200, 0.28)";
     ctx.beginPath();
-    ctx.moveTo(0, -6);
-    ctx.lineTo(4.2, 5);
-    ctx.lineTo(-4.2, 5);
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-9, -24);
+    ctx.lineTo(9, -24);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#f7f3ea";
+    ctx.strokeStyle = "#1c1814";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(0, 0, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#2a9b96";
+    ctx.beginPath();
+    ctx.moveTo(0, -12);
+    ctx.lineTo(4.2, -2.5);
+    ctx.lineTo(-4.2, -2.5);
     ctx.closePath();
     ctx.fill();
     ctx.restore();
@@ -1134,7 +1580,7 @@ export function createGame(opts: {
       time,
       portal: portalOpen,
       gems: gems.map((g) => g.taken),
-      muses: muses.map((m) => ({ id: m.id, charmed: m.charmed })),
+      shrines: shrines.map((s) => ({ id: s.id, solved: s.solved, mutations: s.mutations })),
       walls: packOpen(maze),
       hunters: hunters.map((h) => ({
         id: h.id,
@@ -1154,7 +1600,7 @@ export function createGame(opts: {
 
   function applySnap(s: {
     gems: boolean[];
-    muses: { id: MuseId; charmed: boolean }[];
+    shrines: { id: ShrineId; solved: boolean; mutations: number }[];
     walls: { n: number[]; w: number[] };
     hunters: Array<Partial<Hunter> & { id: string }>;
     portal: boolean;
@@ -1166,9 +1612,23 @@ export function createGame(opts: {
       g.taken = taken;
       g.mesh.visible = !taken;
     });
-    for (const m of s.muses) {
-      const ent = muses.find((x) => x.id === m.id);
-      if (ent) ent.charmed = m.charmed;
+    for (const m of s.shrines) {
+      const ent = shrines.find((x) => x.id === m.id);
+      if (!ent) continue;
+      ent.solved = m.solved;
+      ent.mutations = m.mutations;
+      ent.pattern = makeEchoPattern(maze.seed, shrineIndex(ent.id), ent.mutations);
+      if (ent.solved) {
+        ent.mesh.visible = false;
+        if (shrineId === ent.id) {
+          shrineId = null;
+          echoStatus = null;
+          echoFlash = null;
+          echoPlaying = false;
+          awayShrine = ent.id;
+          if (phase === "echo") phase = "playing";
+        }
+      }
     }
     unpackOpen(maze, s.walls.n, s.walls.w);
     rebuildWallMeshes();
@@ -1247,6 +1707,11 @@ export function createGame(opts: {
           netAcc = 0;
         }
       }
+    } else if (phase === "echo") {
+      ghost.visible = false;
+      tickEcho(dt);
+      animateEntities(now, dt);
+      playCam(dt);
     } else if (phase === "title") {
       ghost.visible = false;
       animateEntities(now, dt);
@@ -1254,9 +1719,24 @@ export function createGame(opts: {
     } else {
       ghost.visible = false;
       animateEntities(now, dt);
-      if (phase !== "encounter") playCam(dt);
+      playCam(dt);
     }
-    renderer.render(scene, camera);
+    csm.update();
+    if (cubeCam && puddle && hunters[0] && (phase === "playing" || phase === "title")) {
+      puddleTick += 1;
+      if (puddleTick % 4 === 0) {
+        if (phase === "playing") {
+          const me = local();
+          cubeCam.position.set(me.x, 0.32, me.z);
+        } else {
+          cubeCam.position.copy(camera.position);
+        }
+        puddle.visible = false;
+        cubeCam.update(renderer, scene);
+        puddle.visible = true;
+      }
+    }
+    post.render();
     drawMinimap();
     raf = requestAnimationFrame(frame);
   }
@@ -1315,50 +1795,86 @@ export function createGame(opts: {
       phase = "playing";
       pushHud();
     },
-    dismissMuse() {
-      if (phase !== "encounter" || !museId) return;
-      awayMuse = museId;
-      museId = null;
+    toMenu() {
+      document.exitPointerLock?.();
+      prompt = null;
+      shrineId = null;
+      showHint = false;
+      awayShrine = null;
+      echoStatus = null;
+      wallMode = null;
+      buildWorld(settings.seed ?? ((maze?.seed ?? Date.now()) % 1_000_000_007));
+      phase = "title";
+      pushHud();
+    },
+    dismissEcho() {
+      if (phase !== "echo" || !shrineId) return;
+      const ent = shrines.find((s) => s.id === shrineId);
+      if (ent) flashPad(ent.mesh, null);
+      awayShrine = shrineId;
+      shrineId = null;
+      echoStatus = null;
+      echoFlash = null;
+      echoPlaying = false;
       phase = "playing";
       pushHud();
     },
-    answer(optionId: string) {
-      const def = museId ? museById(museId) : undefined;
+    echoStep(step: EchoStep) {
       const me = local();
-      if (!def || phase !== "encounter") return { ok: false, hearts: me.hp };
-      const ok = optionId === def.correct;
-      if (ok) {
-        const ent = muses.find((m) => m.id === def.id);
-        if (ent) ent.charmed = true;
-        me.weapon = makeWeapon(def.reward, me.diamonds, theme.id, def.id);
-        setViewWeapon(me.weapon);
-        audio.charm();
-        audio.success();
-        awayMuse = def.id;
-        museId = null;
-        showHint = false;
-        phase = "playing";
-        refreshPortal();
-        emit({ type: "result", ok: true, hearts: me.hp, weaponName: me.weapon.name });
+      if (phase !== "echo" || echoStatus !== "repeat" || !shrineId) return { ok: false, done: false };
+      const ent = shrines.find((s) => s.id === shrineId);
+      if (!ent || ent.solved) return { ok: false, done: false };
+      const expected = echoPattern[echoInput.length];
+      echoFlash = step;
+      flashPad(ent.mesh, step);
+      audio.echo(step, theme.id);
+      if (step !== expected) {
+        ent.mutations += 1;
+        ent.pattern = makeEchoPattern(maze.seed, shrineIndex(ent.id), ent.mutations);
+        echoPattern = ent.pattern;
+        echoInput = [];
+        echoStatus = "fail";
+        echoPlaying = true;
+        audio.fail();
+        camShake = 0.16;
+        mutateNearbyWall(ent);
+        window.setTimeout(() => {
+          if (phase !== "echo" || shrineId !== ent.id) return;
+          echoStatus = "listen";
+          echoAcc = 0;
+          echoLastI = -1;
+          echoFlash = null;
+          echoPlaying = true;
+          pushHud();
+        }, 560);
+        emit({ type: "result", ok: false, hearts: me.hp, weaponName: me.weapon?.name ?? "Unarmed" });
         pushHud();
-        net?.send({ t: "charm", id: def.id, diamonds: me.diamonds });
-        return { ok: true, hearts: me.hp };
+        return { ok: false, done: false };
       }
-      me.hp = Math.max(0, me.hp - 1);
-      showHint = true;
-      audio.fail();
-      camShake = 0.2;
-      emit({ type: "result", ok: false, hearts: me.hp, weaponName: me.weapon?.name ?? "Unarmed" });
-      if (me.hp <= 0) {
-        me.dead = true;
-        me.respawn = 3.2;
+      echoInput = [...echoInput, step];
+      if (echoInput.length >= echoPattern.length) {
+        completeShrine(ent, me, true);
+        awayShrine = ent.id;
+        shrineId = null;
+        echoStatus = null;
+        echoFlash = null;
         phase = "playing";
-        museId = null;
+        emit({ type: "result", ok: true, hearts: me.hp, weaponName: me.weapon?.name ?? "Armed" });
+        net?.send({ t: "shrine", id: ent.id, diamonds: me.diamonds });
+        pushHud();
+        return { ok: true, done: true };
       }
       pushHud();
-      return { ok: false, hearts: me.hp };
+      return { ok: true, done: false };
     },
     setKey(code, down) {
+      if (down && phase === "echo") {
+        const step = codeToEcho(code);
+        if (step) {
+          handle.echoStep(step);
+          return;
+        }
+      }
       if (down) keys.add(code);
       else keys.delete(code);
     },
@@ -1381,13 +1897,17 @@ export function createGame(opts: {
     interact() {
       if (phase !== "playing") return;
       if (prompt === "exit") win();
-      if (prompt === "charm") {
-        const m = muses.find((e) => !e.charmed && Math.hypot(e.x - local().x, e.z - local().z) < 2);
-        if (m) openMuse(m.id);
+      if (prompt === "shrine") {
+        const m = shrines.find((e) => !e.solved && Math.hypot(e.x - local().x, e.z - local().z) < 2);
+        if (m) openEcho(m.id);
       }
       if (prompt === "wall") handle.toggleWall();
     },
     shoot() {
+      if (phase === "echo") {
+        handle.echoStep("f");
+        return;
+      }
       if (phase !== "playing") return;
       fireFrom(local());
       net?.send({ t: "shot", yaw, id: localId });
@@ -1422,7 +1942,7 @@ export function createGame(opts: {
           size: SizeId;
           ai: number;
           gems: boolean[];
-          muses: { id: MuseId; charmed: boolean }[];
+          shrines: { id: ShrineId; solved: boolean; mutations: number }[];
           walls: { n: number[]; w: number[] };
           hunters: Array<Partial<Hunter> & { id: string }>;
           portal: boolean;
@@ -1464,6 +1984,22 @@ export function createGame(opts: {
             h.diamonds -= 1;
             rebuildWallMeshes();
           }
+        }
+      }
+      if (msg.t === "shrine") {
+        const id = String(msg.id) as ShrineId;
+        const h = hunters.find((x) => x.id === from);
+        const ent = shrines.find((s) => s.id === id);
+        if (h && ent) completeShrine(ent, h, false);
+        if (ent?.solved && shrineId === ent.id) {
+          flashPad(ent.mesh, null);
+          shrineId = null;
+          echoStatus = null;
+          echoFlash = null;
+          echoPlaying = false;
+          awayShrine = ent.id;
+          if (phase === "echo") phase = "playing";
+          pushHud();
         }
       }
     },
@@ -1511,6 +2047,8 @@ export function createGame(opts: {
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVis);
       clearWorld();
+      post.dispose();
+      csm.dispose();
       renderer.dispose();
     },
   };
@@ -1535,6 +2073,57 @@ export function createGame(opts: {
         qaKeys.clear();
         if (v > 0.2) qaKeys.add("KeyA");
         if (v < -0.2) qaKeys.add("KeyD");
+      },
+      getPhase: () => phase,
+      getShrines: () => shrines.map((s) => ({ id: s.id, x: s.x, z: s.z, solved: s.solved })),
+      warp: (x: number, z: number) => {
+        const me = local();
+        me.x = x;
+        me.z = z;
+      },
+      getEcho: () => ({
+        phase,
+        status: echoStatus,
+        pattern: [...echoPattern],
+        input: [...echoInput],
+        weapon: local().weapon?.name ?? null,
+        solved: shrines.filter((s) => s.solved).length,
+        hearts: local().hp,
+      }),
+      echoStep: (step: EchoStep) => handle.echoStep(step),
+      qaEcho: (id: ShrineId, mode: "solve" | "miss") => {
+        const ent = shrines.find((s) => s.id === id && !s.solved) ?? shrines.find((s) => !s.solved);
+        if (!ent) return { ok: false };
+        const me = local();
+        me.x = ent.x + 1.15;
+        me.z = ent.z;
+        if (phase !== "echo" || shrineId !== ent.id) openEcho(ent.id);
+        echoStatus = "repeat";
+        echoPlaying = false;
+        echoFlash = null;
+        echoInput = [];
+        if (mode === "miss") {
+          const wrong = (echoPattern[0] === "w" ? "a" : "w") as EchoStep;
+          const res = handle.echoStep(wrong);
+          return {
+            ...res,
+            hearts: me.hp,
+            status: echoStatus,
+            solved: shrines.filter((s) => s.solved).length,
+            mutations: ent.mutations,
+          };
+        }
+        let last = { ok: false, done: false };
+        for (const step of [...echoPattern]) last = handle.echoStep(step);
+        return {
+          ...last,
+          hearts: me.hp,
+          weapon: me.weapon?.name ?? null,
+          solved: shrines.filter((s) => s.solved).length,
+          explored: explored.size,
+          portal: portalOpen,
+          phase,
+        };
       },
     };
   }

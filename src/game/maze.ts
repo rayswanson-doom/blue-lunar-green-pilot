@@ -1,4 +1,4 @@
-import { MUSES, type MuseId, type SizeDef } from "./content";
+import { SHRINES, type ShrineId, type SizeDef } from "./content";
 
 export const CELL = 3.7;
 export const WALL_T = 0.42;
@@ -29,7 +29,7 @@ export type MazeData = {
   start: CellRef;
   exit: CellRef;
   startYaw: number;
-  muses: { id: MuseId; c: number; r: number }[];
+  shrines: { id: ShrineId; c: number; r: number }[];
   diamonds: CellRef[];
   lanterns: { x: number; z: number }[];
 };
@@ -176,7 +176,7 @@ export function generateMaze(seed: number, size: SizeDef): MazeData {
   path.reverse();
 
   const inner = path.slice(2, Math.max(3, path.length - 2));
-  const museCells: { id: MuseId; c: number; r: number }[] = [];
+  const shrineCells: { id: ShrineId; c: number; r: number }[] = [];
   const used = new Set<number>([k(start.c, start.r), k(exit.c, exit.r)]);
   const takeAlong = [0.22, 0.44, 0.66, 0.84];
   for (let i = 0; i < 4; i++) {
@@ -191,7 +191,7 @@ export function generateMaze(seed: number, size: SizeDef): MazeData {
       kk = k(cell.c, cell.r);
     }
     used.add(kk);
-    museCells.push({ id: MUSES[i]!.id, c: cell.c, r: cell.r });
+    shrineCells.push({ id: SHRINES[i]!.id, c: cell.c, r: cell.r });
   }
 
   const dead: CellRef[] = [];
@@ -232,7 +232,7 @@ export function generateMaze(seed: number, size: SizeDef): MazeData {
     start,
     exit,
     startYaw,
-    muses: museCells,
+    shrines: shrineCells,
     diamonds,
     lanterns,
   };

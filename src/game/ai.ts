@@ -37,10 +37,10 @@ export function pickBotTarget(
   maze: MazeData,
   local: Hunter,
   diamonds: { x: number; z: number; taken: boolean }[],
-  muses: { x: number; z: number; charmed: boolean }[],
+  shrines: { x: number; z: number; solved: boolean }[],
   portal: boolean,
   exit: { x: number; z: number },
-): { x: number; z: number; mode: "hunt" | "gem" | "muse" | "exit" | "wander" } {
+): { x: number; z: number; mode: "hunt" | "gem" | "shrine" | "exit" | "wander" } {
   if (portal) return { x: exit.x, z: exit.z, mode: "exit" };
   const los =
     !local.dead &&
@@ -50,16 +50,16 @@ export function pickBotTarget(
     return { x: local.x, z: local.z, mode: "hunt" };
   }
   let bestM = 99;
-  let muse: { x: number; z: number } | null = null;
-  for (const m of muses) {
-    if (m.charmed) continue;
+  let shrine: { x: number; z: number } | null = null;
+  for (const m of shrines) {
+    if (m.solved) continue;
     const d = Math.hypot(m.x - bot.x, m.z - bot.z);
     if (d < bestM) {
       bestM = d;
-      muse = m;
+      shrine = m;
     }
   }
-  if (muse && bestM < 14) return { x: muse.x, z: muse.z, mode: "muse" };
+  if (shrine && bestM < 14) return { x: shrine.x, z: shrine.z, mode: "shrine" };
   let bestD = 99;
   let gem: { x: number; z: number } | null = null;
   for (const d of diamonds) {
@@ -71,7 +71,7 @@ export function pickBotTarget(
     }
   }
   if (gem) return { x: gem.x, z: gem.z, mode: "gem" };
-  if (muse) return { x: muse.x, z: muse.z, mode: "muse" };
+  if (shrine) return { x: shrine.x, z: shrine.z, mode: "shrine" };
   const n = neighborsOf(maze, worldToCell(bot.x, bot.z, maze.cols, maze.rows).c, worldToCell(bot.x, bot.z, maze.cols, maze.rows).r);
   const step = n[Math.floor(Math.random() * Math.max(1, n.length))];
   if (step) return { x: (step.c + 0.5) * CELL, z: (step.r + 0.5) * CELL, mode: "wander" };
